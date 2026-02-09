@@ -1,0 +1,100 @@
+================================================================================
+FULL SHOPIFY AUTOMATION - FINAL SETUP
+================================================================================
+
+You have Shopify staff access! Now we can automate EVERYTHING.
+
+STEP 1: TEST THE UPLOAD NOW
+================================================================================
+
+Run this command with YOUR email and password:
+
+python auto_shopify_upload.py your.email@example.com yourpassword
+
+This will:
+- Open Chrome browser
+- Login to Shopify with your credentials
+- Upload all CSV files from shopify_imports/
+- Close browser
+
+Watch it work to make sure everything is correct!
+
+
+STEP 2: CREATE WEEKLY AUTOMATION TASK
+================================================================================
+
+Once the test works, run this command as Administrator:
+
+schtasks /create /tn "Weekly_Shopify_Upload" /tr "python C:\Users\ahmed\Desktop\scrapers\auto_shopify_upload.py your.email@example.com yourpassword" /sc weekly /d SUN /st 05:00 /f
+
+Change:
+- your.email@example.com → Your actual email
+- yourpassword → Your actual password
+
+
+STEP 3: VERIFY AUTOMATION
+================================================================================
+
+Check both tasks are created:
+
+schtasks /query /tn "Weekly_Shopify_CSV_Export"
+schtasks /query /tn "Weekly_Shopify_Upload"
+
+
+COMPLETE WEEKLY FLOW (100% AUTOMATED):
+================================================================================
+
+Sunday 2:00 AM → Scrapers run (31,488 products collected)
+Sunday 4:00 AM → CSV files generated (with 20% markup)
+Sunday 5:00 AM → CSV files uploaded to Shopify automatically
+                 ↓
+                 Products in Shopify as drafts
+                 ↓
+                 Client reviews and publishes
+
+
+MANUAL TESTING:
+================================================================================
+
+Test CSV generation:
+python shopify_csv_export.py 20
+
+Test Shopify upload:
+python auto_shopify_upload.py your.email@example.com yourpassword
+
+Run both together:
+python shopify_csv_export.py 20
+python auto_shopify_upload.py your.email@example.com yourpassword
+
+
+SECURITY NOTE:
+================================================================================
+
+Your password will be stored in the Windows Task Scheduler.
+Only you (and administrators) can see it.
+
+For better security, you can:
+1. Create a separate Shopify staff account just for automation
+2. Give it only "Product" permissions
+3. Use that account's credentials
+
+
+TROUBLESHOOTING:
+================================================================================
+
+If upload fails:
+- Make sure Chrome browser is installed
+- Check your Shopify email/password are correct
+- Try running manually first to see errors
+- Check logs in the console output
+
+
+WHAT'S AUTOMATED NOW:
+================================================================================
+
+✓ Scraping (Sunday 2 AM)
+✓ CSV export (Sunday 4 AM)
+✓ Shopify upload (Sunday 5 AM)
+✓ 100% HANDS-FREE!
+
+================================================================================

@@ -1,0 +1,111 @@
+================================================================================
+SHOPIFY INTEGRATION - COMPLETE SETUP GUIDE
+================================================================================
+
+STEP 1: SETUP WEEKLY AUTOMATION
+================================================================================
+
+1. Right-click PowerShell and select "Run as Administrator"
+
+2. Copy and paste this command:
+
+schtasks /create /tn "Weekly_Shopify_CSV_Export" /tr "python C:\Users\ahmed\Desktop\scrapers\shopify_csv_export.py 20" /sc weekly /d SUN /st 04:00 /f
+
+3. Press Enter
+
+✓ Done! CSV files will be generated every Sunday at 4:00 AM
+
+
+STEP 2: SEND FILES TO YOUR CLIENT (THIS WEEK)
+================================================================================
+
+The CSV files are already generated in: shopify_imports/
+
+1. Zip the entire "shopify_imports" folder
+
+2. Send to your client via email/WeTransfer/Dropbox
+
+3. Tell them: "Import these in Shopify Admin → Products → Import"
+
+
+STEP 3: TELL YOUR CLIENT TO INSTALL MATRIXIFY (FOR AUTOMATION)
+================================================================================
+
+For future weeks to be automatic, your client needs to:
+
+1. Install Matrixify app from Shopify App Store
+   URL: https://apps.shopify.com/excel-export-import
+   Cost: $30/month (7-day free trial)
+
+2. You need to upload CSV files somewhere public:
+   - Option A: Dropbox (get public links)
+   - Option B: Google Drive (get public links)
+   - Option C: Your web server
+
+3. In Matrixify app:
+   - Go to: Import → Schedule
+   - For each CSV file, create a scheduled import:
+     * Import type: Products
+     * Source: From URL
+     * URL: [paste the public URL]
+     * Schedule: Weekly, Sunday at 5:00 AM
+     * Click Save
+
+4. Done! Products will auto-import every week
+
+
+ALTERNATIVE: MANUAL WEEKLY PROCESS (NO MATRIXIFY)
+================================================================================
+
+If your client doesn't want to pay for Matrixify:
+
+Every Monday morning:
+1. Check shopify_imports/ folder (files generated Sunday 4 AM)
+2. Zip the folder
+3. Send to client
+4. Client imports manually in Shopify Admin
+
+
+WHAT'S AUTOMATED NOW:
+================================================================================
+
+✓ Scrapers run: Sunday 2:00 AM
+✓ CSV export runs: Sunday 4:00 AM
+✓ Files ready in: shopify_imports/
+
+NOT AUTOMATED (needs client or Matrixify):
+- Uploading to Shopify (requires credentials or Matrixify app)
+
+
+TESTING:
+================================================================================
+
+To test the CSV generation now:
+
+python shopify_csv_export.py 20
+
+Files will appear in shopify_imports/ folder
+
+
+CHECKING THE SCHEDULED TASK:
+================================================================================
+
+To verify the task was created:
+
+schtasks /query /tn "Weekly_Shopify_CSV_Export"
+
+To run it manually now:
+
+schtasks /run /tn "Weekly_Shopify_CSV_Export"
+
+
+SUMMARY:
+================================================================================
+
+✓ Weekly automation: DONE (CSV files auto-generated)
+✓ Files ready: shopify_imports/ folder
+✓ Next step: Send files to client OR setup Matrixify
+
+Your part is DONE. The rest is on your client.
+
+================================================================================

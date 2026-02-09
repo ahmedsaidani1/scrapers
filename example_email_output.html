@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background-color: #f5f5f5; }
+        .container { max-width: 900px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }
+        h2 { color: #34495e; margin-top: 30px; }
+        table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+        th { background-color: #3498db; color: white; padding: 12px; text-align: left; font-weight: bold; }
+        td { padding: 10px; border-bottom: 1px solid #ddd; }
+        tr:hover { background-color: #f5f5f5; }
+        .new { color: #27ae60; font-weight: bold; }
+        .updated { color: #f39c12; font-weight: bold; }
+        .removed { color: #e74c3c; font-weight: bold; }
+        .summary { background-color: #ecf0f1; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
+        .summary ul { list-style: none; padding: 0; }
+        .summary li { padding: 8px 0; font-size: 16px; }
+        .price-up { color: #e74c3c; font-weight: bold; }
+        .price-down { color: #27ae60; font-weight: bold; }
+        a { color: #3498db; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Scraper Update Report: MEINHAUSSHOP</h1>
+        <p><strong>Date:</strong> 2026-01-29 14:30:00</p>
+        
+        <div class="summary">
+            <h3>Summary</h3>
+            <ul>
+                <li class="new">🆕 New Products: 15</li>
+                <li class="updated">🔄 Updated Products: 8</li>
+                <li class="removed">❌ Removed Products: 2</li>
+            </ul>
+        </div>
+        
+        <h2 class="new">🆕 New Products</h2>
+        <table>
+            <tr>
+                <th>Name</th>
+                <th>Manufacturer</th>
+                <th>Category</th>
+                <th>Price (Gross)</th>
+                <th>Link</th>
+            </tr>
+            <tr>
+                <td>DAB Nova Up 300 M-AE</td>
+                <td>DAB</td>
+                <td>Tauchpumpe</td>
+                <td>€189,90</td>
+                <td><a href="#">View Product</a></td>
+            </tr>
+            <tr>
+                <td>Tallas D-CWP 300</td>
+                <td>Tallas</td>
+                <td>Flachsauger</td>
+                <td>€119,00</td>
+                <td><a href="#">View Product</a></td>
+            </tr>
+            <tr>
+                <td>DAB FEKA 600 M-A</td>
+                <td>DAB</td>
+                <td>Schmutzwasserpumpe</td>
+                <td>€189,00</td>
+                <td><a href="#">View Product</a></td>
+            </tr>
+            <tr>
+                <td>Grundfos Unilift CC5</td>
+                <td>Grundfos</td>
+                <td>Tauchpumpe</td>
+                <td>€245,50</td>
+                <td><a href="#">View Product</a></td>
+            </tr>
+            <tr>
+                <td>Wilo Drain TMW 32/8</td>
+                <td>Wilo</td>
+                <td>Schmutzwasserpumpe</td>
+                <td>€312,90</td>
+                <td><a href="#">View Product</a></td>
+            </tr>
+        </table>
+        <p style="margin-top: 10px; color: #666;"><em>... and 10 more new products</em></p>
+        
+        <h2 class="updated">🔄 Updated Products</h2>
+        <table>
+            <tr>
+                <th>Name</th>
+                <th>Field Changed</th>
+                <th>Old Value</th>
+                <th>New Value</th>
+                <th>Link</th>
+            </tr>
+            <tr>
+                <td>DAB Aquajet 82M</td>
+                <td>price_gross</td>
+                <td>€159,90</td>
+                <td class="price-down">€149,90 ↓</td>
+                <td><a href="#">View Product</a></td>
+            </tr>
+            <tr>
+                <td>Grundfos Scala2</td>
+                <td>price_gross</td>
+                <td>€599,00</td>
+                <td class="price-up">€649,00 ↑</td>
+                <td><a href="#">View Product</a></td>
+            </tr>
+            <tr>
+                <td>Wilo HiMulti 3</td>
+                <td>price_gross</td>
+                <td>€425,50</td>
+                <td class="price-down">€399,90 ↓</td>
+                <td><a href="#">View Product</a></td>
+            </tr>
+            <tr>
+                <td>DAB E.sybox Mini</td>
+                <td>name</td>
+                <td>DAB E.sybox Mini</td>
+                <td>DAB E.sybox Mini 3</td>
+                <td><a href="#">View Product</a></td>
+            </tr>
+            <tr>
+                <td>Tallas D-ESYBOX</td>
+                <td>category</td>
+                <td>Hauswasserwerk</td>
+                <td>Hauswasserautomat</td>
+                <td><a href="#">View Product</a></td>
+            </tr>
+        </table>
+        <p style="margin-top: 10px; color: #666;"><em>... and 3 more updated products</em></p>
+        
+        <h2 class="removed">❌ Removed Products</h2>
+        <table>
+            <tr>
+                <th>Name</th>
+                <th>Manufacturer</th>
+                <th>Last Price</th>
+            </tr>
+            <tr>
+                <td>Old Pump Model XYZ</td>
+                <td>Generic Brand</td>
+                <td>€89,90</td>
+            </tr>
+            <tr>
+                <td>Discontinued Product ABC</td>
+                <td>Unknown</td>
+                <td>€125,00</td>
+            </tr>
+        </table>
+        
+        <div class="footer">
+            <p><strong>Legend:</strong></p>
+            <ul style="list-style: none; padding: 0;">
+                <li>🆕 <span class="new">Green</span> = New products added</li>
+                <li>🔄 <span class="updated">Orange</span> = Products updated</li>
+                <li>❌ <span class="removed">Red</span> = Products removed</li>
+                <li>↓ <span class="price-down">Green arrow</span> = Price decreased</li>
+                <li>↑ <span class="price-up">Red arrow</span> = Price increased</li>
+            </ul>
+            <p style="margin-top: 20px;"><em>This is an automated email from your scraper notification system.</em></p>
+        </div>
+    </div>
+</body>
+</html>
