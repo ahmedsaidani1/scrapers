@@ -1,12 +1,9 @@
 services:
   - type: cron
     name: powerbi-scraper-production
-    env: python
+    env: docker
     schedule: "0 2 * * 0"  # Every Sunday at 2 AM UTC
-    buildCommand: pip install -r requirements.txt
-    startCommand: python run_production_powerbi.py
+    dockerfilePath: ./Dockerfile
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.0
-      - key: GOOGLE_APPLICATION_CREDENTIALS
+      - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
         sync: false
