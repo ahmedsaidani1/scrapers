@@ -47,7 +47,7 @@ SHEET_IDS = {
    
     
     # Remaining sites to implement
-    "pumpen_heizung": "TBD",
+    "pumpenheizung": "TBD",
     "glo24": "TBD",
     "wolf_online_shop": "11xq8HC3Fky59kFL9dU3fVfTfmUHpvwLeL1oJ9BYS004",
 }
@@ -262,6 +262,14 @@ SCRAPER_CONFIGS = {
         "sitemap_url": "https://www.wolf-online-shop.de/sitemap.xml",
         "requires_login": False,
         "platform": "Custom (Heating/HVAC parts shop - Cloudflare protected)",
+        "custom_headers": {},
+        "delay_override": None,
+    },
+    "pumpenheizung": {
+        "base_url": "https://pumpen-heizung.de",
+        "sitemap_url": "https://pumpen-heizung.de/sitemap.xml",
+        "requires_login": False,
+        "platform": "Unknown (will discover)",
         "custom_headers": {},
         "delay_override": None,
     },

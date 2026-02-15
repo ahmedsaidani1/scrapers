@@ -1,6 +1,6 @@
 """
 Production Power BI Data Pipeline
-Scrapes ALL products from 9 working websites
+Scrapes ALL products from 10 working websites
 Pushes to Google Sheet: 1MrbHBVwR8wIP35syBl5vV2oJ_LqO_HuxqSlu3WZ2KRg
 Runs on Render with automatic scheduling
 Memory optimized for 512MB instances
@@ -10,11 +10,24 @@ import csv
 import time
 import os
 import gc
+import psutil
 from datetime import datetime
 from pathlib import Path
 
 # Enable garbage collection
 gc.enable()
+
+def get_memory_usage():
+    """Get current memory usage in MB"""
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    return mem_info.rss / 1024 / 1024  # Convert to MB
+
+def log_memory(label=""):
+    """Log current memory usage"""
+    mem_mb = get_memory_usage()
+    print(f"[MEMORY] {label}: {mem_mb:.1f} MB")
+    return mem_mb
 
 # Import all working scrapers
 from meinhausshop_scraper import MeinHausShopScraper
@@ -26,13 +39,14 @@ from st_shop24_scraper import StShop24Scraper
 from selfio_scraper import SelfioScraper
 from pumpe24_scraper import Pumpe24Scraper
 from wasserpumpe_scraper import WasserpumpeScraper
+from pumpenheizung_scraper import PumpenheizungScraper
 from google_sheets_helper import push_data
 from config import DATA_DIR, CSV_COLUMNS
 
 # Google Sheet ID for Power BI
 POWER_BI_SHEET_ID = "1MrbHBVwR8wIP35syBl5vV2oJ_LqO_HuxqSlu3WZ2KRg"
 
-# 9 working scrapers - NO LIMITS, scrape everything
+# 10 working scrapers - NO LIMITS, scrape everything
 # Ordered by memory usage: lightest first, Selenium scrapers last
 SCRAPERS = [
     ("sanundo", SanundoScraper),              # Lightweight
@@ -43,6 +57,7 @@ SCRAPERS = [
     ("meinhausshop", MeinHausShopScraper),    # Medium
     ("wolfonlineshop", WolfonlineshopScraper),# Medium
     ("pumpe24", Pumpe24Scraper),              # Medium
+    ("pumpenheizung", PumpenheizungScraper),  # Heavy (Selenium) - run second to last
     ("wasserpumpe", WasserpumpeScraper),      # Heavy (Selenium) - run last
 ]
 
@@ -56,6 +71,9 @@ def run_production_pipeline():
     print(f"Mode: PRODUCTION - Scraping ALL products (no limits)")
     print(f"Total scrapers: {len(SCRAPERS)}")
     print("=" * 80)
+    
+    # Log initial memory
+    log_memory("Initial")
     print()
     
     results = []
@@ -65,6 +83,9 @@ def run_production_pipeline():
     for idx, (name, scraper_class) in enumerate(SCRAPERS, 1):
         print(f"\n[{idx}/{len(SCRAPERS)}] Running {name}...")
         print("-" * 80)
+        
+        # Log memory before scraper
+        log_memory(f"Before {name}")
         
         start_time = time.time()
         
@@ -111,6 +132,10 @@ def run_production_pipeline():
                     all_products.extend(products)
                     
                     print(f"✓ {name}: {len(products)} products scraped in {elapsed:.1f}s")
+                    
+                    # Log memory after scraper
+                    log_memory(f"After {name}")
+                    
                     results.append({
                         "scraper": name,
                         "status": "success",
@@ -133,8 +158,10 @@ def run_production_pipeline():
             del scraper
             
             # Force garbage collection
-            import gc
             gc.collect()
+            
+            # Log memory after cleanup
+            log_memory(f"After cleanup {name}")
                 
         except Exception as e:
             elapsed = time.time() - start_time
@@ -148,8 +175,8 @@ def run_production_pipeline():
             })
             
             # Clean up on error too
-            import gc
             gc.collect()
+            log_memory(f"After error {name}")
     
     total_elapsed = time.time() - total_start_time
     
