@@ -3,13 +3,18 @@ Production Power BI Data Pipeline
 Scrapes ALL products from 9 working websites
 Pushes to Google Sheet: 1MrbHBVwR8wIP35syBl5vV2oJ_LqO_HuxqSlu3WZ2KRg
 Runs on Render with automatic scheduling
+Memory optimized for 512MB instances
 """
 import sys
 import csv
 import time
 import os
+import gc
 from datetime import datetime
 from pathlib import Path
+
+# Enable garbage collection
+gc.enable()
 
 # Import all working scrapers
 from meinhausshop_scraper import MeinHausShopScraper
@@ -111,6 +116,9 @@ def run_production_pipeline():
                         "products": len(products),
                         "time": elapsed
                     })
+                    
+                    # Clear products list to free memory
+                    del products
             else:
                 print(f"✗ {name}: No CSV file found")
                 results.append({
@@ -119,6 +127,13 @@ def run_production_pipeline():
                     "products": 0,
                     "time": elapsed
                 })
+            
+            # Delete scraper object to free memory
+            del scraper
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
                 
         except Exception as e:
             elapsed = time.time() - start_time
@@ -130,6 +145,10 @@ def run_production_pipeline():
                 "time": elapsed,
                 "error": str(e)
             })
+            
+            # Clean up on error too
+            import gc
+            gc.collect()
     
     total_elapsed = time.time() - total_start_time
     
