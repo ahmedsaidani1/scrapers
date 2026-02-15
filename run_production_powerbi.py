@@ -47,18 +47,17 @@ from config import DATA_DIR, CSV_COLUMNS
 POWER_BI_SHEET_ID = "1MrbHBVwR8wIP35syBl5vV2oJ_LqO_HuxqSlu3WZ2KRg"
 
 # 10 working scrapers - NO LIMITS, scrape everything
-# Ordered by memory usage: lightest first, Selenium scrapers last
 SCRAPERS = [
-    ("sanundo", SanundoScraper),              # Lightweight
-    ("heima24", Heima24Scraper),              # Lightweight
-    ("st_shop24", StShop24Scraper),           # Lightweight
-    ("selfio", SelfioScraper),                # Lightweight
-    ("heizungsdiscount24", Heizungsdiscount24Scraper),  # Medium
-    ("meinhausshop", MeinHausShopScraper),    # Medium
-    ("wolfonlineshop", WolfonlineshopScraper),# Medium
-    ("pumpe24", Pumpe24Scraper),              # Medium
-    ("pumpenheizung", PumpenheizungScraper),  # Heavy (Selenium) - run second to last
-    ("wasserpumpe", WasserpumpeScraper),      # Heavy (Selenium) - run last
+    ("sanundo", SanundoScraper),
+    ("heima24", Heima24Scraper),
+    ("st_shop24", StShop24Scraper),
+    ("selfio", SelfioScraper),
+    ("heizungsdiscount24", Heizungsdiscount24Scraper),
+    ("meinhausshop", MeinHausShopScraper),
+    ("wolfonlineshop", WolfonlineshopScraper),
+    ("pumpe24", Pumpe24Scraper),
+    ("pumpenheizung", PumpenheizungScraper),
+    ("wasserpumpe", WasserpumpeScraper),
 ]
 
 def run_production_pipeline():

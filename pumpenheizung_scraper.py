@@ -11,9 +11,11 @@ from typing import List, Dict, Optional, Any
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 import undetected_chromedriver as uc
 from base_scraper import BaseScraper
 from google_sheets_helper import push_data
@@ -41,23 +43,25 @@ class PumpenheizungScraper(BaseScraper):
         self.logger.info(f"Initialized scraper for {self.base_url}")
     
     def init_driver(self):
-        """Initialize Selenium driver with undetected-chromedriver."""
+        """Initialize Selenium driver with regular Chrome."""
         if self.driver:
             return
         
         try:
             self.logger.info("Initializing Selenium driver...")
             
-            options = uc.ChromeOptions()
+            options = Options()
             options.add_argument('--headless=new')
             options.add_argument('--no-sandbox')
             options.add_argument('--disable-dev-shm-usage')
             options.add_argument('--disable-gpu')
             options.add_argument('--window-size=1920,1080')
             options.add_argument('--disable-blink-features=AutomationControlled')
+            options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
             
-            self.driver = uc.Chrome(options=options, version_main=None)
-            self.driver.set_page_load_timeout(120)  # 2 minutes timeout
+            service = Service(ChromeDriverManager().install())
+            self.driver = webdriver.Chrome(service=service, options=options)
+            self.driver.set_page_load_timeout(120)
             
             self.logger.info("Selenium driver initialized")
             
