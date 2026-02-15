@@ -1,11 +1,13 @@
 """
-Power BI Test Data Generator
-Scrapes 2000 products from each of the 9 working websites
+Production Power BI Data Pipeline
+Scrapes ALL products from 9 working websites
 Pushes to Google Sheet: 1MrbHBVwR8wIP35syBl5vV2oJ_LqO_HuxqSlu3WZ2KRg
+Runs on Render with automatic scheduling
 """
 import sys
 import csv
 import time
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -22,10 +24,10 @@ from wasserpumpe_scraper import WasserpumpeScraper
 from google_sheets_helper import push_data
 from config import DATA_DIR, CSV_COLUMNS
 
-# Google Sheet ID for Power BI testing
+# Google Sheet ID for Power BI
 POWER_BI_SHEET_ID = "1MrbHBVwR8wIP35syBl5vV2oJ_LqO_HuxqSlu3WZ2KRg"
 
-# 9 working scrapers
+# 9 working scrapers - NO LIMITS, scrape everything
 SCRAPERS = [
     ("meinhausshop", MeinHausShopScraper),
     ("heima24", Heima24Scraper),
@@ -38,21 +40,21 @@ SCRAPERS = [
     ("wasserpumpe", WasserpumpeScraper),
 ]
 
-def run_power_bi_test():
-    """Run all 9 scrapers with 2000 products each and push to Power BI sheet"""
+def run_production_pipeline():
+    """Run all 9 scrapers with NO LIMITS and push to Power BI sheet"""
     print("=" * 80)
-    print("POWER BI TEST DATA GENERATOR")
+    print("PRODUCTION POWER BI DATA PIPELINE")
     print("=" * 80)
     print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Target Sheet ID: {POWER_BI_SHEET_ID}")
-    print(f"Products per scraper: 2000")
+    print(f"Mode: PRODUCTION - Scraping ALL products (no limits)")
     print(f"Total scrapers: {len(SCRAPERS)}")
-    print(f"Expected total products: {len(SCRAPERS) * 2000} = 18,000 products")
     print("=" * 80)
     print()
     
     results = []
     all_products = []
+    total_start_time = time.time()
     
     for idx, (name, scraper_class) in enumerate(SCRAPERS, 1):
         print(f"\n[{idx}/{len(SCRAPERS)}] Running {name}...")
@@ -64,8 +66,8 @@ def run_power_bi_test():
             # Initialize scraper
             scraper = scraper_class()
             
-            # Run scraper with limit of 2000 products
-            product_count = scraper.run(max_products=2000)
+            # Run scraper with NO LIMIT - scrape everything
+            product_count = scraper.run(max_products=None)
             
             elapsed = time.time() - start_time
             
@@ -80,28 +82,22 @@ def run_power_bi_test():
                     for product in products:
                         product['source'] = name
                         
-                        # Convert price_net from German format (1.234,56) to numeric format
+                        # Convert price_net from German format to numeric
                         if product.get('price_net') and product['price_net'].strip():
                             try:
                                 price_str = str(product['price_net']).strip().strip('"')
-                                # Check if it's German format (has comma) or already numeric (has dot)
                                 if ',' in price_str:
-                                    # German format: remove thousand separators (.) and replace decimal comma with dot
                                     price_str = price_str.replace('.', '').replace(',', '.')
-                                # Convert to float
                                 product['price_net'] = float(price_str)
                             except (ValueError, AttributeError):
                                 product['price_net'] = ''
                         
-                        # Convert price_gross from German format (1.234,56) to numeric format
+                        # Convert price_gross from German format to numeric
                         if product.get('price_gross') and product['price_gross'].strip():
                             try:
                                 price_str = str(product['price_gross']).strip().strip('"')
-                                # Check if it's German format (has comma) or already numeric (has dot)
                                 if ',' in price_str:
-                                    # German format: remove thousand separators (.) and replace decimal comma with dot
                                     price_str = price_str.replace('.', '').replace(',', '.')
-                                # Convert to float
                                 product['price_gross'] = float(price_str)
                             except (ValueError, AttributeError):
                                 product['price_gross'] = ''
@@ -135,6 +131,8 @@ def run_power_bi_test():
                 "error": str(e)
             })
     
+    total_elapsed = time.time() - total_start_time
+    
     # Push all products to Power BI Google Sheet
     if all_products:
         print("\n" + "=" * 80)
@@ -142,7 +140,7 @@ def run_power_bi_test():
         print("=" * 80)
         try:
             # Write combined CSV file
-            combined_csv = DATA_DIR / "power_bi_test.csv"
+            combined_csv = DATA_DIR / "power_bi_production.csv"
             columns_with_source = CSV_COLUMNS + ['source'] if 'source' not in CSV_COLUMNS else CSV_COLUMNS
             
             with open(combined_csv, 'w', newline='', encoding='utf-8') as f:
@@ -158,60 +156,43 @@ def run_power_bi_test():
                 csv_file=combined_csv
             )
             print(f"✓ Successfully pushed {len(all_products)} products to Google Sheets")
+            print(f"✓ Power BI will auto-refresh with new data")
         except Exception as e:
             print(f"✗ Failed to push to Google Sheets: {e}")
             import traceback
             traceback.print_exc()
+            sys.exit(1)
+    else:
+        print("\n✗ No products scraped - pipeline failed")
+        sys.exit(1)
     
     # Print summary
     print("\n" + "=" * 80)
-    print("SUMMARY")
+    print("PRODUCTION PIPELINE SUMMARY")
     print("=" * 80)
-    print(f"\nTotal products scraped: {len(all_products)}")
-    print(f"Target: {len(SCRAPERS) * 2000}")
-    print(f"Success rate: {(len(all_products) / (len(SCRAPERS) * 2000)) * 100:.1f}%")
+    print(f"\nTotal products scraped: {len(all_products):,}")
+    print(f"Total time: {total_elapsed/60:.1f} minutes")
+    print(f"Average per scraper: {total_elapsed/len(SCRAPERS):.1f} seconds")
     print()
     
     print("Results by scraper:")
     print("-" * 80)
     for result in results:
         status_icon = "✓" if result["status"] == "success" else "✗"
-        print(f"{status_icon} {result['scraper']:20s} | {result['products']:3d} products | {result['time']:6.1f}s")
+        print(f"{status_icon} {result['scraper']:20s} | {result['products']:6,d} products | {result['time']:6.1f}s")
         if "error" in result:
             print(f"  Error: {result['error']}")
     
     print("\n" + "=" * 80)
     print(f"Completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 80)
-    print()
-    print(f"✓ Data pushed to Google Sheet: {POWER_BI_SHEET_ID}")
-    print()
-    print("POWER BI SETUP (ONE-TIME ONLY):")
-    print("=" * 80)
-    print("Your client needs to set this up ONCE, then it auto-refreshes weekly:")
-    print()
-    print("1. Open Power BI Desktop")
-    print("2. Get Data → Web")
-    print("3. Paste this URL:")
-    print(f"   https://docs.google.com/spreadsheets/d/{POWER_BI_SHEET_ID}/export?format=csv")
-    print()
-    print("4. Power BI will load the data with:")
-    print("   ✓ Headers automatically recognized")
-    print("   ✓ Numbers as numbers (sortable)")
-    print()
-    print("5. Click 'Load' (no transformation needed!)")
-    print()
-    print("6. Set up automatic refresh:")
-    print("   - File → Options → Data Load")
-    print("   - Configure refresh schedule (e.g., weekly)")
-    print()
-    print("That's it! Every week when you run this script, Power BI will")
-    print("automatically refresh with the new data. No manual work needed!")
+    print(f"\n✓ Data successfully pushed to Google Sheet: {POWER_BI_SHEET_ID}")
+    print(f"✓ Power BI Dashboard will auto-refresh with {len(all_products):,} products")
     print("=" * 80)
 
 if __name__ == "__main__":
     try:
-        run_power_bi_test()
+        run_production_pipeline()
     except KeyboardInterrupt:
         print("\n\n⚠ Interrupted by user")
         sys.exit(1)
