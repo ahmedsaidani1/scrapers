@@ -48,10 +48,39 @@ class Heima24Scraper(BaseScraper):
             soup = self.parse_html(response.text)
             locs = soup.find_all('loc')
             
+            skip_terms = [
+                "stellenangebot",
+                "ueber-uns",
+                "retourenabwicklung",
+                "widerruf",
+                "datenschutz",
+                "impressum",
+                "kontakt",
+                "versand",
+                "zahlungs",
+                "agb",
+                "climatechange",
+                "renewableenergy",
+                "neue-angebote",
+                "ust-regelung",
+            ]
+
             for loc in locs:
                 url = loc.text.strip()
                 # Filter for product pages (they have .html extension)
-                if url.endswith('.html') and url != self.base_url + '/':
+                if not url.endswith('.html'):
+                    continue
+                if url == self.base_url + '/':
+                    continue
+                url_l = url.lower()
+                if any(term in url_l for term in skip_terms):
+                    continue
+                if '/blog/' in url_l or '/ratgeber/' in url_l:
+                    continue
+                if url_l.count('-') < 2 and '/shop/' not in url_l:
+                    # Heuristic: product URLs on this site are usually descriptive slugs.
+                    continue
+                if url not in product_urls:
                     product_urls.append(url)
             
             self.logger.info(f"Found {len(product_urls)} product URLs")
@@ -71,6 +100,12 @@ class Heima24Scraper(BaseScraper):
         
         try:
             soup = self.parse_html(response.text)
+            product_name = ''
+            manufacturer = ''
+            article_number = ''
+            ean = ''
+            price_gross = ''
+            product_image = ''
             
             # Try to extract from JSON-LD structured data first (most reliable)
             json_ld = soup.find('script', {'type': 'application/ld+json'})
@@ -80,38 +115,32 @@ class Heima24Scraper(BaseScraper):
                     import html
                     data = json.loads(json_ld.string)
                     
+                    # Some pages expose a list of schemas; keep only Product node.
+                    if isinstance(data, list):
+                        data = next(
+                            (item for item in data if isinstance(item, dict) and item.get('@type') == 'Product'),
+                            {}
+                        )
+
                     # Check if it's a Product schema
                     if isinstance(data, dict) and data.get('@type') == 'Product':
                         product_name = html.unescape(data.get('name', ''))
                         manufacturer = data.get('brand', {}).get('name', '') if isinstance(data.get('brand'), dict) else ''
                         article_number = data.get('mpn', '') or data.get('sku', '')
                         ean = data.get('gtin8', '') or data.get('gtin13', '') or data.get('gtin14', '')
-                        
+
                         # Get price from offers
                         offers = data.get('offers', {})
                         price_gross_raw = str(offers.get('price', '')) if isinstance(offers, dict) else ''
                         price_gross = price_gross_raw.replace('.', ',') if price_gross_raw else ''
-                        
+
                         # Get image
                         images = data.get('image', [])
                         product_image = images[0] if isinstance(images, list) and images else ''
-                        
+
                         self.logger.info(f"Extracted from JSON-LD: {product_name}, EAN: {ean}")
                 except Exception as e:
                     self.logger.warning(f"Failed to parse JSON-LD: {e}")
-                    manufacturer = ''
-                    article_number = ''
-                    ean = ''
-                    price_gross = ''
-                    product_image = ''
-                    product_name = ''
-            else:
-                manufacturer = ''
-                article_number = ''
-                ean = ''
-                price_gross = ''
-                product_image = ''
-                product_name = ''
             
             # Fallback to HTML extraction if JSON-LD didn't work
             if not product_name:

@@ -143,6 +143,21 @@ class GoogleSheetsHelper:
                 worksheet.clear()
                 logger.info("Cleared existing worksheet data")
 
+            current_max_rows = worksheet.row_count
+
+            def ensure_row_capacity(required_last_row: int) -> None:
+                nonlocal current_max_rows
+                if required_last_row <= current_max_rows:
+                    return
+                rows_to_add = required_last_row - current_max_rows
+                worksheet.add_rows(rows_to_add)
+                current_max_rows += rows_to_add
+                logger.info(
+                    f"Expanded worksheet rows by {rows_to_add} "
+                    f"(new capacity: {current_max_rows})"
+                )
+
+            ensure_row_capacity(1)
             worksheet.update(values=[header_row], range_name="A1", value_input_option="RAW")
 
             end_col = self._column_to_letter(num_cols)
@@ -156,6 +171,7 @@ class GoogleSheetsHelper:
                 batch.append(row)
                 if len(batch) >= safe_batch_size:
                     end_row = next_row + len(batch) - 1
+                    ensure_row_capacity(end_row)
                     range_name = f"A{next_row}:{end_col}{end_row}"
                     worksheet.update(
                         values=batch,
@@ -168,6 +184,7 @@ class GoogleSheetsHelper:
 
             if batch:
                 end_row = next_row + len(batch) - 1
+                ensure_row_capacity(end_row)
                 range_name = f"A{next_row}:{end_col}{end_row}"
                 worksheet.update(
                     values=batch,
