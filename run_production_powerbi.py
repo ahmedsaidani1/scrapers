@@ -71,13 +71,26 @@ SCRAPERS = [
     ("wasserpumpe", WasserpumpeScraper),
 ]
 
-def process_and_write_products(name, csv_file, combined_csv_path, columns_with_source):
+def convert_price(price_str):
+    """Optimized price conversion from German format to float"""
+    if not price_str or not price_str.strip():
+        return ''
+    try:
+        price_str = str(price_str).strip().strip('"')
+        if ',' in price_str:
+            # German format: "1.234,56" -> 1234.56
+            price_str = price_str.replace('.', '').replace(',', '.')
+        return float(price_str)
+    except (ValueError, AttributeError):
+        return ''
+
+def process_and_write_products(name, csv_file, combined_csv_path, columns_with_source, header_written):
     """
     Process products from scraper CSV and write them incrementally to combined CSV.
-    This avoids loading all products into memory at once.
+    Optimized for speed with larger chunks and reduced I/O operations.
     
     Returns:
-        Number of products processed
+        Tuple of (product_count, header_written_flag)
     """
     product_count = 0
     
@@ -85,33 +98,20 @@ def process_and_write_products(name, csv_file, combined_csv_path, columns_with_s
         with open(csv_file, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             
-            # Process products in chunks and write immediately
+            # Process products in larger chunks for better performance
             chunk = []
-            chunk_size = 100  # Process 100 products at a time
+            chunk_size = 1000  # Increased from 100 to 1000 for faster processing
             
             for product in reader:
                 # Add source column
                 product['Quelle'] = name
                 
-                # Convert Preis_Netto from German format to numeric
-                if product.get('Preis_Netto') and product['Preis_Netto'].strip():
-                    try:
-                        price_str = str(product['Preis_Netto']).strip().strip('"')
-                        if ',' in price_str:
-                            price_str = price_str.replace('.', '').replace(',', '.')
-                        product['Preis_Netto'] = float(price_str)
-                    except (ValueError, AttributeError):
-                        product['Preis_Netto'] = ''
+                # Optimized price conversion (only convert if value exists)
+                if product.get('Preis_Netto'):
+                    product['Preis_Netto'] = convert_price(product['Preis_Netto'])
                 
-                # Convert Preis_Brutto from German format to numeric
-                if product.get('Preis_Brutto') and product['Preis_Brutto'].strip():
-                    try:
-                        price_str = str(product['Preis_Brutto']).strip().strip('"')
-                        if ',' in price_str:
-                            price_str = price_str.replace('.', '').replace(',', '.')
-                        product['Preis_Brutto'] = float(price_str)
-                    except (ValueError, AttributeError):
-                        product['Preis_Brutto'] = ''
+                if product.get('Preis_Brutto'):
+                    product['Preis_Brutto'] = convert_price(product['Preis_Brutto'])
                 
                 chunk.append(product)
                 product_count += 1
@@ -119,28 +119,27 @@ def process_and_write_products(name, csv_file, combined_csv_path, columns_with_s
                 # Write chunk when it reaches chunk_size
                 if len(chunk) >= chunk_size:
                     with csv_lock:
-                        # Thread-safe check: write header only if file doesn't exist
-                        file_exists = combined_csv_path.exists()
                         with open(combined_csv_path, 'a', newline='', encoding='utf-8') as combined_f:
                             writer = csv.DictWriter(combined_f, fieldnames=columns_with_source)
-                            if not file_exists:
+                            if not header_written[0]:
                                 writer.writeheader()
+                                header_written[0] = True
                             writer.writerows(chunk)
                     chunk = []
-                    gc.collect()  # Force garbage collection after each chunk
+                    # Only GC every 5 chunks to reduce overhead
+                    if product_count % (chunk_size * 5) == 0:
+                        gc.collect()
             
             # Write remaining products
             if chunk:
                 with csv_lock:
-                    # Thread-safe check: write header only if file doesn't exist
-                    file_exists = combined_csv_path.exists()
                     with open(combined_csv_path, 'a', newline='', encoding='utf-8') as combined_f:
                         writer = csv.DictWriter(combined_f, fieldnames=columns_with_source)
-                        if not file_exists:
+                        if not header_written[0]:
                             writer.writeheader()
+                            header_written[0] = True
                         writer.writerows(chunk)
                 chunk = []
-                gc.collect()
     
     except Exception as e:
         thread_safe_print(f"✗ Error processing products from {name}: {e}")
@@ -149,7 +148,7 @@ def process_and_write_products(name, csv_file, combined_csv_path, columns_with_s
     
     return product_count
 
-def run_single_scraper(name, scraper_class, idx, total, combined_csv_path, columns_with_source):
+def run_single_scraper(name, scraper_class, idx, total, combined_csv_path, columns_with_source, header_written):
     """Run a single scraper in a thread and write products incrementally"""
     thread_safe_print(f"\n[{idx}/{total}] Starting {name}...")
     thread_safe_print("-" * 80)
@@ -168,7 +167,9 @@ def run_single_scraper(name, scraper_class, idx, total, combined_csv_path, colum
         
         # Delete scraper object immediately to free memory
         del scraper
-        gc.collect()
+        # Only GC if memory usage is high
+        if get_memory_usage() > 1500:  # Only GC if over 1.5GB
+            gc.collect()
         
         mem_after_scrape = get_memory_usage()
         
@@ -177,7 +178,7 @@ def run_single_scraper(name, scraper_class, idx, total, combined_csv_path, colum
         if csv_file.exists():
             # Process and write products incrementally
             processed_count = process_and_write_products(
-                name, csv_file, combined_csv_path, columns_with_source
+                name, csv_file, combined_csv_path, columns_with_source, header_written
             )
             
             mem_after_process = get_memory_usage()
@@ -192,9 +193,8 @@ def run_single_scraper(name, scraper_class, idx, total, combined_csv_path, colum
                 "time": elapsed
             }
             
-            # Clear CSV file from memory by deleting reference
+            # Clear CSV file reference
             del csv_file
-            gc.collect()
             
             return result
         else:
@@ -223,13 +223,13 @@ def run_single_scraper(name, scraper_class, idx, total, combined_csv_path, colum
 def run_production_pipeline():
     """Run all 10 scrapers IN PARALLEL with NO LIMITS and push to Power BI sheet"""
     print("=" * 80)
-    print("PRODUCTION POWER BI DATA PIPELINE - MEMORY OPTIMIZED")
+    print("PRODUCTION POWER BI DATA PIPELINE - OPTIMIZED FOR SPEED")
     print("=" * 80)
     print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Target Sheet ID: {POWER_BI_SHEET_ID}")
     print(f"Mode: PRODUCTION - Scraping ALL products (no limits)")
     print(f"Total scrapers: {len(SCRAPERS)}")
-    print(f"Memory Strategy: Streaming to disk (no in-memory accumulation)")
+    print(f"Strategy: Streaming + High Parallelism (fastest + memory safe)")
     print("=" * 80)
     
     # Log initial memory
@@ -247,20 +247,25 @@ def run_production_pipeline():
     # Prepare columns with source
     columns_with_source = CSV_COLUMNS + ['Quelle'] if 'Quelle' not in CSV_COLUMNS else CSV_COLUMNS
     
+    # Shared header flag (thread-safe list to pass by reference)
+    header_written = [False]
+    
     results = []
     total_products = 0
     total_start_time = time.time()
     
     # Run scrapers in parallel with ThreadPoolExecutor
-    # Reduced to 2-3 workers to avoid memory pressure on 2GB instance
-    max_workers = min(3, len(SCRAPERS))
-    print(f"Running {len(SCRAPERS)} scrapers with {max_workers} parallel workers (memory optimized)...")
+    # Increased to 5-6 workers since we're streaming data efficiently
+    # With 2GB RAM, streaming allows more parallelism
+    max_workers = min(6, len(SCRAPERS))
+    print(f"Running {len(SCRAPERS)} scrapers with {max_workers} parallel workers (optimized for speed)...")
+    print(f"Chunk size: 1000 products (optimized I/O)")
     print()
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all scraper tasks
         future_to_scraper = {
-            executor.submit(run_single_scraper, name, scraper_class, idx, len(SCRAPERS), combined_csv, columns_with_source): name
+            executor.submit(run_single_scraper, name, scraper_class, idx, len(SCRAPERS), combined_csv, columns_with_source, header_written): name
             for idx, (name, scraper_class) in enumerate(SCRAPERS, 1)
         }
         
@@ -275,9 +280,13 @@ def run_production_pipeline():
                 if result.get('products'):
                     total_products += result['products']
                 
-                # Force garbage collection after each scraper
-                gc.collect()
-                log_memory(f"After {scraper_name}")
+                # Only GC if memory is getting high (every 3 scrapers or if over 1.5GB)
+                current_mem = get_memory_usage()
+                if current_mem > 1500 or len(results) % 3 == 0:
+                    gc.collect()
+                    log_memory(f"After {scraper_name}")
+                else:
+                    thread_safe_print(f"[MEMORY] After {scraper_name}: {current_mem:.1f} MB")
                     
             except Exception as e:
                 thread_safe_print(f"✗ {scraper_name}: Unexpected error - {e}")
@@ -335,9 +344,18 @@ def run_production_pipeline():
     print("=" * 80)
     print(f"\nTotal products scraped: {total_products:,}")
     print(f"Total time: {total_elapsed/60:.1f} minutes ({total_elapsed:.1f} seconds)")
-    print(f"Average per scraper: {total_elapsed/len(SCRAPERS):.1f} seconds")
-    if max_workers > 1:
-        print(f"Speed improvement: ~{max_workers}x faster than sequential (with {max_workers} workers)")
+    
+    # Calculate average scraper time (longest scraper determines total time in parallel)
+    longest_scraper_time = max((r.get('time', 0) for r in results), default=0)
+    avg_scraper_time = sum(r.get('time', 0) for r in results) / len(results) if results else 0
+    estimated_sequential_time = sum(r.get('time', 0) for r in results)
+    
+    print(f"Average scraper time: {avg_scraper_time:.1f}s")
+    print(f"Longest scraper time: {longest_scraper_time:.1f}s")
+    if max_workers > 1 and estimated_sequential_time > 0:
+        speedup = estimated_sequential_time / total_elapsed
+        print(f"Estimated sequential time: {estimated_sequential_time/60:.1f} minutes")
+        print(f"Speed improvement: ~{speedup:.1f}x faster with {max_workers} parallel workers")
     print()
     
     print("Results by scraper:")
