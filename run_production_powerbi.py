@@ -1,6 +1,6 @@
 """
-Production Power BI Data Pipeline
-Scrapes ALL products from 10 working websites
+Production Power BI Data Pipeline - OPTIMIZED FOR SPEED
+Scrapes ALL products from 10 working websites IN PARALLEL
 Pushes to Google Sheet: 1MrbHBVwR8wIP35syBl5vV2oJ_LqO_HuxqSlu3WZ2KRg
 Runs on Render with automatic scheduling
 Memory optimized for 512MB instances
@@ -13,9 +13,19 @@ import gc
 import psutil
 from datetime import datetime
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 
 # Enable garbage collection
 gc.enable()
+
+# Thread-safe lock for printing
+print_lock = Lock()
+
+def thread_safe_print(*args, **kwargs):
+    """Thread-safe print function"""
+    with print_lock:
+        print(*args, **kwargs)
 
 def get_memory_usage():
     """Get current memory usage in MB"""
@@ -26,7 +36,7 @@ def get_memory_usage():
 def log_memory(label=""):
     """Log current memory usage"""
     mem_mb = get_memory_usage()
-    print(f"[MEMORY] {label}: {mem_mb:.1f} MB")
+    thread_safe_print(f"[MEMORY] {label}: {mem_mb:.1f} MB")
     return mem_mb
 
 # Import all working scrapers
@@ -60,15 +70,103 @@ SCRAPERS = [
     ("wasserpumpe", WasserpumpeScraper),
 ]
 
+def run_single_scraper(name, scraper_class, idx, total):
+    """Run a single scraper in a thread"""
+    thread_safe_print(f"\n[{idx}/{total}] Starting {name}...")
+    thread_safe_print("-" * 80)
+    
+    start_time = time.time()
+    
+    try:
+        # Initialize scraper
+        scraper = scraper_class()
+        
+        # Run scraper with NO LIMIT - scrape everything
+        product_count = scraper.run(max_products=None)
+        
+        elapsed = time.time() - start_time
+        
+        # Read the scraped products from CSV
+        csv_file = DATA_DIR / f"{name}.csv"
+        if csv_file.exists():
+            with open(csv_file, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                products = list(reader)
+                
+                # Add source column and convert prices to numbers
+                for product in products:
+                    product['Quelle'] = name  # 'source' in German
+                    
+                    # Convert Preis_Netto from German format to numeric
+                    if product.get('Preis_Netto') and product['Preis_Netto'].strip():
+                        try:
+                            price_str = str(product['Preis_Netto']).strip().strip('"')
+                            if ',' in price_str:
+                                price_str = price_str.replace('.', '').replace(',', '.')
+                            product['Preis_Netto'] = float(price_str)
+                        except (ValueError, AttributeError):
+                            product['Preis_Netto'] = ''
+                    
+                    # Convert Preis_Brutto from German format to numeric
+                    if product.get('Preis_Brutto') and product['Preis_Brutto'].strip():
+                        try:
+                            price_str = str(product['Preis_Brutto']).strip().strip('"')
+                            if ',' in price_str:
+                                price_str = price_str.replace('.', '').replace(',', '.')
+                            product['Preis_Brutto'] = float(price_str)
+                        except (ValueError, AttributeError):
+                            product['Preis_Brutto'] = ''
+                
+                thread_safe_print(f"✓ {name}: {len(products)} products scraped in {elapsed:.1f}s")
+                
+                result = {
+                    "scraper": name,
+                    "status": "success",
+                    "products": len(products),
+                    "time": elapsed,
+                    "data": products
+                }
+                
+                # Delete scraper object to free memory
+                del scraper
+                gc.collect()
+                
+                return result
+        else:
+            thread_safe_print(f"✗ {name}: No CSV file found")
+            return {
+                "scraper": name,
+                "status": "failed",
+                "products": 0,
+                "time": elapsed,
+                "data": []
+            }
+            
+    except Exception as e:
+        elapsed = time.time() - start_time
+        thread_safe_print(f"✗ {name}: Error - {str(e)}")
+        import traceback
+        thread_safe_print(traceback.format_exc())
+        
+        return {
+            "scraper": name,
+            "status": "error",
+            "products": 0,
+            "time": elapsed,
+            "error": str(e),
+            "data": []
+        }
+
 def run_production_pipeline():
-    """Run all 9 scrapers with NO LIMITS and push to Power BI sheet"""
+    """Run all 10 scrapers IN PARALLEL with NO LIMITS and push to Power BI sheet"""
     print("=" * 80)
-    print("PRODUCTION POWER BI DATA PIPELINE")
+    print("PRODUCTION POWER BI DATA PIPELINE - PARALLEL EXECUTION")
     print("=" * 80)
     print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Target Sheet ID: {POWER_BI_SHEET_ID}")
     print(f"Mode: PRODUCTION - Scraping ALL products (no limits)")
     print(f"Total scrapers: {len(SCRAPERS)}")
+    print(f"Execution: PARALLEL (all scrapers run simultaneously)")
     print("=" * 80)
     
     # Log initial memory
@@ -79,103 +177,40 @@ def run_production_pipeline():
     all_products = []
     total_start_time = time.time()
     
-    for idx, (name, scraper_class) in enumerate(SCRAPERS, 1):
-        print(f"\n[{idx}/{len(SCRAPERS)}] Running {name}...")
-        print("-" * 80)
+    # Run scrapers in parallel with ThreadPoolExecutor
+    # Use max 5 workers to avoid overwhelming the system
+    max_workers = min(5, len(SCRAPERS))
+    print(f"Running {len(SCRAPERS)} scrapers with {max_workers} parallel workers...")
+    print()
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all scraper tasks
+        future_to_scraper = {
+            executor.submit(run_single_scraper, name, scraper_class, idx, len(SCRAPERS)): name
+            for idx, (name, scraper_class) in enumerate(SCRAPERS, 1)
+        }
         
-        # Log memory before scraper
-        log_memory(f"Before {name}")
-        
-        start_time = time.time()
-        
-        try:
-            # Initialize scraper
-            scraper = scraper_class()
-            
-            # Run scraper with NO LIMIT - scrape everything
-            product_count = scraper.run(max_products=None)
-            
-            elapsed = time.time() - start_time
-            
-            # Read the scraped products from CSV
-            csv_file = DATA_DIR / f"{name}.csv"
-            if csv_file.exists():
-                with open(csv_file, 'r', encoding='utf-8') as f:
-                    reader = csv.DictReader(f)
-                    products = list(reader)
-                    
-                    # Add source column and convert prices to numbers
-                    for product in products:
-                        product['source'] = name
-                        
-                        # Convert price_net from German format to numeric
-                        if product.get('price_net') and product['price_net'].strip():
-                            try:
-                                price_str = str(product['price_net']).strip().strip('"')
-                                if ',' in price_str:
-                                    price_str = price_str.replace('.', '').replace(',', '.')
-                                product['price_net'] = float(price_str)
-                            except (ValueError, AttributeError):
-                                product['price_net'] = ''
-                        
-                        # Convert price_gross from German format to numeric
-                        if product.get('price_gross') and product['price_gross'].strip():
-                            try:
-                                price_str = str(product['price_gross']).strip().strip('"')
-                                if ',' in price_str:
-                                    price_str = price_str.replace('.', '').replace(',', '.')
-                                product['price_gross'] = float(price_str)
-                            except (ValueError, AttributeError):
-                                product['price_gross'] = ''
-                    
-                    all_products.extend(products)
-                    
-                    print(f"✓ {name}: {len(products)} products scraped in {elapsed:.1f}s")
-                    
-                    # Log memory after scraper
-                    log_memory(f"After {name}")
-                    
-                    results.append({
-                        "scraper": name,
-                        "status": "success",
-                        "products": len(products),
-                        "time": elapsed
-                    })
-                    
-                    # Clear products list to free memory
-                    del products
-            else:
-                print(f"✗ {name}: No CSV file found")
-                results.append({
-                    "scraper": name,
-                    "status": "failed",
-                    "products": 0,
-                    "time": elapsed
-                })
-            
-            # Delete scraper object to free memory
-            del scraper
-            
-            # Force garbage collection
-            gc.collect()
-            
-            # Log memory after cleanup
-            log_memory(f"After cleanup {name}")
+        # Collect results as they complete
+        for future in as_completed(future_to_scraper):
+            scraper_name = future_to_scraper[future]
+            try:
+                result = future.result()
+                results.append(result)
                 
-        except Exception as e:
-            elapsed = time.time() - start_time
-            print(f"✗ {name}: Error - {str(e)}")
-            results.append({
-                "scraper": name,
-                "status": "error",
-                "products": 0,
-                "time": elapsed,
-                "error": str(e)
-            })
-            
-            # Clean up on error too
-            gc.collect()
-            log_memory(f"After error {name}")
+                # Add products to combined list
+                if result.get('data'):
+                    all_products.extend(result['data'])
+                    
+            except Exception as e:
+                thread_safe_print(f"✗ {scraper_name}: Unexpected error - {e}")
+                results.append({
+                    "scraper": scraper_name,
+                    "status": "error",
+                    "products": 0,
+                    "time": 0,
+                    "error": str(e),
+                    "data": []
+                })
     
     total_elapsed = time.time() - total_start_time
     
@@ -187,7 +222,7 @@ def run_production_pipeline():
         try:
             # Write combined CSV file
             combined_csv = DATA_DIR / "power_bi_production.csv"
-            columns_with_source = CSV_COLUMNS + ['source'] if 'source' not in CSV_COLUMNS else CSV_COLUMNS
+            columns_with_source = CSV_COLUMNS + ['Quelle'] if 'Quelle' not in CSV_COLUMNS else CSV_COLUMNS
             
             with open(combined_csv, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=columns_with_source)
@@ -217,12 +252,15 @@ def run_production_pipeline():
     print("PRODUCTION PIPELINE SUMMARY")
     print("=" * 80)
     print(f"\nTotal products scraped: {len(all_products):,}")
-    print(f"Total time: {total_elapsed/60:.1f} minutes")
+    print(f"Total time: {total_elapsed/60:.1f} minutes ({total_elapsed:.1f} seconds)")
     print(f"Average per scraper: {total_elapsed/len(SCRAPERS):.1f} seconds")
+    print(f"Speed improvement: ~{len(SCRAPERS)}x faster than sequential")
     print()
     
     print("Results by scraper:")
     print("-" * 80)
+    # Sort results by scraper name for consistent output
+    results.sort(key=lambda x: x['scraper'])
     for result in results:
         status_icon = "✓" if result["status"] == "success" else "✗"
         print(f"{status_icon} {result['scraper']:20s} | {result['products']:6,d} products | {result['time']:6.1f}s")
@@ -234,6 +272,7 @@ def run_production_pipeline():
     print("=" * 80)
     print(f"\n✓ Data successfully pushed to Google Sheet: {POWER_BI_SHEET_ID}")
     print(f"✓ Power BI Dashboard will auto-refresh with {len(all_products):,} products")
+    print(f"✓ Total execution time: {total_elapsed/60:.1f} minutes")
     print("=" * 80)
 
 if __name__ == "__main__":

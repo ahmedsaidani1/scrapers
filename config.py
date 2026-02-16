@@ -56,18 +56,18 @@ SHEET_IDS = {
 # SCRAPING CONFIGURATION
 # ============================================================================
 
-# Standard CSV columns - NEW CLIENT REQUIREMENTS
+# Standard CSV columns - GERMAN COLUMN NAMES
 CSV_COLUMNS = [
-    "manufacturer",
-    "category",
-    "name",
-    "title",
-    "article_number",
-    "price_net",
-    "price_gross",
-    "ean",
-    "product_image",
-    "product_url"
+    "Hersteller",           # manufacturer
+    "Kategorie",            # category
+    "Name",                 # name
+    "Titel",                # title
+    "Artikelnummer",        # article_number
+    "Preis_Netto",          # price_net
+    "Preis_Brutto",         # price_gross
+    "EAN",                  # ean
+    "Produktbild",          # product_image
+    "Produkt_URL"           # product_url
 ]
 
 # Request settings
