@@ -203,14 +203,35 @@ class BaseScraper(ABC):
                          Must contain all keys from CSV_COLUMNS
         """
         try:
-            # Ensure all required columns are present
-            row = {col: product_data.get(col, '') for col in CSV_COLUMNS}
+            # Support both German CSV keys and legacy/internal English keys.
+            def pick(*keys):
+                for key in keys:
+                    value = product_data.get(key)
+                    if value is not None and str(value).strip() != "":
+                        return value
+                return ""
+
+            row = {
+                "Hersteller": pick("Hersteller", "manufacturer", "brand"),
+                "Kategorie": pick("Kategorie", "category"),
+                "Name": pick("Name", "name", "Titel", "title"),
+                "Titel": pick("Titel", "title", "Name", "name"),
+                "Artikelnummer": pick("Artikelnummer", "article_number", "sku", "mpn"),
+                "Preis_Netto": pick("Preis_Netto", "price_net"),
+                "Preis_Brutto": pick("Preis_Brutto", "price_gross"),
+                "EAN": pick("EAN", "ean", "gtin13", "gtin"),
+                "Produktbild": pick("Produktbild", "product_image", "image", "image_url"),
+                "Produkt_URL": pick("Produkt_URL", "product_url", "url", "link"),
+            }
+
+            # Keep strict column order and include any future columns as empty by default.
+            row = {col: row.get(col, "") for col in CSV_COLUMNS}
             
             with open(self.output_file, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
                 writer.writerow(row)
             
-            self.logger.debug(f"Saved product: {row.get('product_name', 'Unknown')}")
+            self.logger.debug(f"Saved product: {row.get('Name', 'Unknown')}")
             
         except Exception as e:
             self.logger.error(f"Failed to save product: {e}")
