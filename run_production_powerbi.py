@@ -98,9 +98,9 @@ def process_and_write_products(name, csv_file, combined_csv_path, columns_with_s
         with open(csv_file, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             
-            # Process products in larger chunks for better performance
+            # Process products in chunks (balanced for memory and speed)
             chunk = []
-            chunk_size = 1000  # Increased from 100 to 1000 for faster processing
+            chunk_size = 500  # Balanced chunk size for memory safety
             
             for product in reader:
                 # Add source column
@@ -126,8 +126,8 @@ def process_and_write_products(name, csv_file, combined_csv_path, columns_with_s
                                 header_written[0] = True
                             writer.writerows(chunk)
                     chunk = []
-                    # Only GC every 5 chunks to reduce overhead
-                    if product_count % (chunk_size * 5) == 0:
+                    # GC every 3 chunks to balance memory and performance
+                    if product_count % (chunk_size * 3) == 0:
                         gc.collect()
             
             # Write remaining products
@@ -167,9 +167,8 @@ def run_single_scraper(name, scraper_class, idx, total, combined_csv_path, colum
         
         # Delete scraper object immediately to free memory
         del scraper
-        # Only GC if memory usage is high
-        if get_memory_usage() > 1500:  # Only GC if over 1.5GB
-            gc.collect()
+        # Always GC after scraper to free memory aggressively
+        gc.collect()
         
         mem_after_scrape = get_memory_usage()
         
@@ -229,7 +228,7 @@ def run_production_pipeline():
     print(f"Target Sheet ID: {POWER_BI_SHEET_ID}")
     print(f"Mode: PRODUCTION - Scraping ALL products (no limits)")
     print(f"Total scrapers: {len(SCRAPERS)}")
-    print(f"Strategy: Streaming + High Parallelism (fastest + memory safe)")
+    print(f"Strategy: Streaming + Batched Processing (memory safe for 2GB)")
     print("=" * 80)
     
     # Log initial memory
@@ -254,51 +253,72 @@ def run_production_pipeline():
     total_products = 0
     total_start_time = time.time()
     
-    # Run scrapers in parallel with ThreadPoolExecutor
-    # Increased to 5-6 workers since we're streaming data efficiently
-    # With 2GB RAM, streaming allows more parallelism
-    max_workers = min(6, len(SCRAPERS))
-    print(f"Running {len(SCRAPERS)} scrapers with {max_workers} parallel workers (optimized for speed)...")
-    print(f"Chunk size: 1000 products (optimized I/O)")
+    # Process scrapers in batches to prevent memory overflow
+    # With 2GB RAM, we need to be conservative
+    batch_size = 3  # Process 3 scrapers at a time
+    max_workers = min(batch_size, len(SCRAPERS))
+    
+    print(f"Running {len(SCRAPERS)} scrapers in batches of {batch_size} (memory safe)...")
+    print(f"Chunk size: 500 products per write")
+    print(f"Memory limit: 1800 MB (will GC aggressively if exceeded)")
     print()
     
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all scraper tasks
-        future_to_scraper = {
-            executor.submit(run_single_scraper, name, scraper_class, idx, len(SCRAPERS), combined_csv, columns_with_source, header_written): name
-            for idx, (name, scraper_class) in enumerate(SCRAPERS, 1)
-        }
+    # Process scrapers in batches
+    for batch_start in range(0, len(SCRAPERS), batch_size):
+        batch_end = min(batch_start + batch_size, len(SCRAPERS))
+        batch_scrapers = SCRAPERS[batch_start:batch_end]
         
-        # Collect results as they complete
-        for future in as_completed(future_to_scraper):
-            scraper_name = future_to_scraper[future]
-            try:
-                result = future.result()
-                results.append(result)
-                
-                # Track total products
-                if result.get('products'):
-                    total_products += result['products']
-                
-                # Only GC if memory is getting high (every 3 scrapers or if over 1.5GB)
-                current_mem = get_memory_usage()
-                if current_mem > 1500 or len(results) % 3 == 0:
-                    gc.collect()
-                    log_memory(f"After {scraper_name}")
-                else:
-                    thread_safe_print(f"[MEMORY] After {scraper_name}: {current_mem:.1f} MB")
+        thread_safe_print(f"\n{'='*80}")
+        thread_safe_print(f"Processing batch {batch_start//batch_size + 1}: {[name for name, _ in batch_scrapers]}")
+        thread_safe_print(f"{'='*80}")
+        log_memory(f"Before batch {batch_start//batch_size + 1}")
+        
+        with ThreadPoolExecutor(max_workers=len(batch_scrapers)) as executor:
+            # Submit batch scraper tasks
+            future_to_scraper = {
+                executor.submit(run_single_scraper, name, scraper_class, batch_start + idx + 1, len(SCRAPERS), combined_csv, columns_with_source, header_written): name
+                for idx, (name, scraper_class) in enumerate(batch_scrapers)
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_scraper):
+                scraper_name = future_to_scraper[future]
+                try:
+                    result = future.result()
+                    results.append(result)
                     
-            except Exception as e:
-                thread_safe_print(f"✗ {scraper_name}: Unexpected error - {e}")
-                import traceback
-                thread_safe_print(traceback.format_exc())
-                results.append({
-                    "scraper": scraper_name,
-                    "status": "error",
-                    "products": 0,
-                    "time": 0,
-                    "error": str(e)
-                })
+                    # Track total products
+                    if result.get('products'):
+                        total_products += result['products']
+                    
+                    # Aggressive memory management
+                    current_mem = get_memory_usage()
+                    if current_mem > 1800:  # If over 1.8GB, force GC
+                        thread_safe_print(f"⚠ High memory usage ({current_mem:.1f} MB) - forcing GC")
+                        gc.collect()
+                        time.sleep(1)  # Brief pause to let GC complete
+                    
+                    log_memory(f"After {scraper_name}")
+                    
+                    # Force GC after each scraper in batch to free memory
+                    gc.collect()
+                        
+                except Exception as e:
+                    thread_safe_print(f"✗ {scraper_name}: Unexpected error - {e}")
+                    import traceback
+                    thread_safe_print(traceback.format_exc())
+                    results.append({
+                        "scraper": scraper_name,
+                        "status": "error",
+                        "products": 0,
+                        "time": 0,
+                        "error": str(e)
+                    })
+        
+        # Aggressive cleanup between batches
+        gc.collect()
+        time.sleep(2)  # Brief pause between batches to let system recover
+        log_memory(f"After batch {batch_start//batch_size + 1}")
     
     total_elapsed = time.time() - total_start_time
     
@@ -352,10 +372,10 @@ def run_production_pipeline():
     
     print(f"Average scraper time: {avg_scraper_time:.1f}s")
     print(f"Longest scraper time: {longest_scraper_time:.1f}s")
-    if max_workers > 1 and estimated_sequential_time > 0:
+    if batch_size > 1 and estimated_sequential_time > 0:
         speedup = estimated_sequential_time / total_elapsed
         print(f"Estimated sequential time: {estimated_sequential_time/60:.1f} minutes")
-        print(f"Speed improvement: ~{speedup:.1f}x faster with {max_workers} parallel workers")
+        print(f"Speed improvement: ~{speedup:.1f}x faster with batched processing ({batch_size} per batch)")
     print()
     
     print("Results by scraper:")
