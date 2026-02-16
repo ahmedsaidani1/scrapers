@@ -148,6 +148,8 @@ services:
     envVars:
       - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
         sync: false
+      - key: PUMPE24_PROXY
+        sync: false
       - key: SCRAPER_FILTER
         value: pumpe24
       - key: POWERBI_WORKSHEET_NAME

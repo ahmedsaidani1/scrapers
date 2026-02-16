@@ -7,6 +7,7 @@ Strategy: Scrape from category pages using cloudscraper
 import sys
 import re
 import time
+import os
 from typing import List, Dict, Optional, Any
 from bs4 import BeautifulSoup
 import cloudscraper
@@ -28,15 +29,20 @@ class Pumpe24Scraper(BaseScraper):
         
         self.config = SCRAPER_CONFIGS.get(SCRAPER_NAME, {})
         self.base_url = self.config.get("base_url", "https://www.pumpe24.de")
+        self.proxy = os.getenv("PUMPE24_PROXY") or self.config.get("proxy")
+        self.request_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        }
         
         # Initialize cloudscraper session
-        self.scraper = cloudscraper.create_scraper(
-            browser={
-                'browser': 'chrome',
-                'platform': 'windows',
-                'mobile': False
-            }
-        )
+        self.scraper = self._create_scraper_session()
+        if self.proxy:
+            self.logger.info("Using proxy for pumpe24 requests")
         
         # Main category URLs to scrape
         self.category_urls = [
@@ -48,22 +54,169 @@ class Pumpe24Scraper(BaseScraper):
         ]
         
         self.logger.info(f"Initialized cloudscraper for {self.base_url}")
+        self._warm_up_session()
+
+    def _create_scraper_session(self):
+        """Create a cloudscraper session with optional proxy."""
+        scraper = cloudscraper.create_scraper(
+            browser={
+                "browser": "chrome",
+                "platform": "windows",
+                "mobile": False,
+            }
+        )
+        if self.proxy:
+            scraper.proxies = {
+                "http": self.proxy,
+                "https": self.proxy,
+            }
+        return scraper
+
+    def _warm_up_session(self):
+        """
+        Warm up Cloudflare cookies before scraping categories.
+        This improves success rate on protected sites.
+        """
+        warmup_urls = [
+            self.base_url,
+            f"{self.base_url}/robots.txt",
+        ]
+        for warmup_url in warmup_urls:
+            try:
+                response = self.scraper.get(
+                    warmup_url,
+                    headers=self.request_headers,
+                    timeout=20,
+                    allow_redirects=True,
+                )
+                self.logger.info(f"Warm-up {warmup_url}: HTTP {response.status_code}")
+                # Stop after first non-403 response
+                if response.status_code != 403:
+                    return
+            except Exception as e:
+                self.logger.debug(f"Warm-up request failed for {warmup_url}: {e}")
     
     def make_request(self, url: str, **kwargs):
         """Override to use cloudscraper instead of requests."""
-        try:
-            response = self.scraper.get(url, timeout=30, **kwargs)
-            response.raise_for_status()
-            return response
-        except Exception as e:
-            self.logger.error(f"Request failed for {url}: {e}")
-            return None
+        request_headers = dict(self.request_headers)
+        request_headers.update(kwargs.pop("headers", {}))
+
+        attempts = kwargs.pop("attempts", 3)
+        for attempt in range(1, attempts + 1):
+            try:
+                response = self.scraper.get(
+                    url,
+                    timeout=30,
+                    headers=request_headers,
+                    allow_redirects=True,
+                    **kwargs,
+                )
+
+                if response.status_code == 403:
+                    self.logger.warning(f"403 for {url} (attempt {attempt}/{attempts})")
+                    # Refresh cookies before next retry
+                    self._warm_up_session()
+                    time.sleep(1.5 * attempt)
+                    continue
+
+                response.raise_for_status()
+                return response
+            except Exception as e:
+                if attempt == attempts:
+                    self.logger.error(f"Request failed for {url}: {e}")
+                else:
+                    self.logger.warning(
+                        f"Request retry for {url} after error (attempt {attempt}/{attempts}): {e}"
+                    )
+                    time.sleep(1.0 * attempt)
+        return None
+
+    def _is_product_url(self, url: str) -> bool:
+        """Determine if a URL is likely a product page."""
+        if not url or "pumpe24.de" not in url:
+            return False
+        if not url.endswith(".html"):
+            return False
+
+        # Exclude known non-product/category pages
+        skip_parts = [
+            "/impressum",
+            "/datenschutz",
+            "/agb",
+            "/kontakt",
+            "/versand",
+            "/zahlung",
+            "/widerruf",
+            "/pumpen.html",
+            "/hauswasserwerke.html",
+            "/druckbehaelter.html",
+            "/zubehoer.html",
+            "/rohre-fittings.html",
+        ]
+        lower_url = url.lower()
+        for part in skip_parts:
+            if part in lower_url:
+                return False
+
+        # Product URLs are usually long/specific and often contain hyphens/numbers
+        path = lower_url.replace("https://www.pumpe24.de/", "")
+        return len(path) > 20 and ("-" in path or any(ch.isdigit() for ch in path))
+
+    def _get_product_urls_from_sitemap(self, max_urls: int = None) -> List[str]:
+        """
+        Fallback: fetch product URLs from sitemap when categories are blocked.
+        """
+        product_urls = []
+        seen = set()
+
+        self.logger.info("Category scraping yielded no URLs; trying sitemap fallback...")
+        sitemap_response = self.make_request(f"{self.base_url}/sitemap.xml", attempts=2)
+        if not sitemap_response:
+            return []
+
+        soup = BeautifulSoup(sitemap_response.text, "xml")
+        sitemap_locs = [loc.get_text(strip=True) for loc in soup.find_all("loc")]
+        if not sitemap_locs:
+            return []
+
+        # If this is a sitemap index, process sub-sitemaps. Otherwise, process as direct URL list.
+        targets = sitemap_locs
+        if any("sitemap" in loc for loc in sitemap_locs):
+            targets = sitemap_locs[:20]
+
+        for target in targets:
+            # Direct URL rows from urlset
+            if target.endswith(".html"):
+                if self._is_product_url(target) and target not in seen:
+                    seen.add(target)
+                    product_urls.append(target)
+                continue
+
+            # Sub-sitemap rows
+            if "sitemap" not in target:
+                continue
+
+            sub_response = self.make_request(target, attempts=2)
+            if not sub_response:
+                continue
+
+            sub_soup = BeautifulSoup(sub_response.text, "xml")
+            for loc in sub_soup.find_all("loc"):
+                url = loc.get_text(strip=True)
+                if self._is_product_url(url) and url not in seen:
+                    seen.add(url)
+                    product_urls.append(url)
+                    if max_urls and len(product_urls) >= max_urls:
+                        return product_urls
+
+        return product_urls
     
     def get_product_urls(self, max_urls: int = None) -> List[str]:
         """
         Get product URLs by scraping category pages and finding actual products.
         """
         product_urls = []
+        seen = set()
         
         try:
             self.logger.info(f"Scraping {len(self.category_urls)} category pages...")
@@ -83,15 +236,9 @@ class Pumpe24Scraper(BaseScraper):
                 
                 for link in product_links:
                     href = link.get('href', '')
-                    # Real products have longer URLs and don't end with just category names
-                    # They typically have product-specific identifiers
-                    if href and href.startswith('http') and '.html' in href:
-                        # Skip if it looks like a subcategory (short path, generic name)
-                        path_parts = href.replace(self.base_url, '').split('/')
-                        # Products usually have longer, more specific URLs
-                        if len(path_parts) > 2 or any(char.isdigit() for char in href):
-                            if href not in product_urls:
-                                product_urls.append(href)
+                    if self._is_product_url(href) and href not in seen:
+                        seen.add(href)
+                        product_urls.append(href)
                 
                 self.logger.info(f"  Found {len(product_links)} links, {len(product_urls)} total products")
                 
@@ -100,7 +247,19 @@ class Pumpe24Scraper(BaseScraper):
                 
                 time.sleep(2)
             
+            if not product_urls:
+                product_urls = self._get_product_urls_from_sitemap(max_urls=max_urls)
+                if product_urls:
+                    self.logger.info(f"Sitemap fallback found {len(product_urls)} products")
+
             self.logger.info(f"Total product URLs found: {len(product_urls)}")
+
+            if not product_urls and not self.proxy:
+                self.logger.warning(
+                    "No product URLs found and no proxy configured. "
+                    "Pumpe24 may block Render datacenter IPs. "
+                    "Set PUMPE24_PROXY to a residential/rotating proxy."
+                )
             
         except Exception as e:
             self.logger.error(f"Error getting product URLs: {e}", exc_info=True)
@@ -253,65 +412,8 @@ class Pumpe24Scraper(BaseScraper):
         return price.strip()
     
     def run(self, max_products: int = None, concurrent_workers: int = 10) -> int:
-        """Run the scraper with optional product limit and concurrent workers."""
-        try:
-            self.logger.info(f"Starting {SCRAPER_NAME} scraper...")
-            
-            # Get product URLs
-            product_urls = self.get_product_urls(max_urls=max_products)
-            
-            if not product_urls:
-                self.logger.error("No product URLs found")
-                return 0
-            
-            self.logger.info(f"Found {len(product_urls)} products to scrape")
-            
-            # Use parent class concurrent scraping
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            import time
-            import random
-            
-            success_count = 0
-            
-            with ThreadPoolExecutor(max_workers=concurrent_workers) as executor:
-                future_to_url = {
-                    executor.submit(self._scrape_with_delay, url): url 
-                    for url in product_urls
-                }
-                
-                for i, future in enumerate(as_completed(future_to_url), 1):
-                    url = future_to_url[future]
-                    
-                    if i % 10 == 0:
-                        self.logger.info(f"Progress: {i}/{len(product_urls)} products processed")
-                    
-                    try:
-                        product_data = future.result()
-                        
-                        if product_data:
-                            self.save_product(product_data)
-                            success_count += 1
-                    
-                    except Exception as e:
-                        self.logger.error(f"Error processing {url}: {e}")
-            
-            self.logger.info(f"Scraping completed: {success_count}/{len(product_urls)} products")
-            
-            return success_count
-            
-        except Exception as e:
-            self.logger.error(f"Error in run: {e}", exc_info=True)
-            return 0
-    
-    def _scrape_with_delay(self, url: str):
-        """Scrape with minimal delay for concurrent execution."""
-        try:
-            import time, random
-            time.sleep(random.uniform(0.05, 0.15))
-            return self.scrape_product(url)
-        except Exception as e:
-            self.logger.error(f"Error scraping {url}: {e}")
-            return None
+        """Run using the bounded-concurrency logic from BaseScraper."""
+        return super().run(max_products=max_products, concurrent_workers=concurrent_workers)
 
 
 def main():
