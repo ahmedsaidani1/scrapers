@@ -289,39 +289,58 @@ class BaseScraper(ABC):
                 self.logger.warning("No product URLs found")
                 return 0
             
-            # Scrape products concurrently for speed
+            # Scrape products concurrently with bounded in-flight futures.
+            # This avoids creating one Future per URL (large memory spike).
             success_count = 0
-            
+            processed_count = 0
+            total_products = len(product_urls)
+            max_in_flight = max(concurrent_workers * 4, concurrent_workers)
+
             with ThreadPoolExecutor(max_workers=concurrent_workers) as executor:
-                # Submit all scraping tasks
-                future_to_url = {
-                    executor.submit(self._scrape_with_retry, url): url 
-                    for url in product_urls
-                }
-                
-                # Process completed tasks
-                for i, future in enumerate(as_completed(future_to_url), 1):
-                    url = future_to_url[future]
-                    
-                    if i % 100 == 0:  # Log progress every 100 products
-                        self.logger.info(f"Progress: {i}/{len(product_urls)} products processed")
-                    
+                url_iter = iter(product_urls)
+                future_to_url = {}
+
+                # Prime queue
+                for _ in range(max_in_flight):
+                    try:
+                        url = next(url_iter)
+                    except StopIteration:
+                        break
+                    future_to_url[executor.submit(self._scrape_with_retry, url)] = url
+
+                while future_to_url:
+                    # Process one completed future at a time, then refill queue
+                    future = next(as_completed(future_to_url))
+                    url = future_to_url.pop(future)
+                    processed_count += 1
+
+                    if processed_count % 100 == 0:
+                        self.logger.info(
+                            f"Progress: {processed_count}/{total_products} products processed"
+                        )
+
                     try:
                         product_data = future.result()
-                        
+
                         if product_data:
                             self.save_product(product_data)
                             success_count += 1
                         else:
                             self.logger.warning(f"No data extracted from {url}")
-                    
+
                     except Exception as e:
                         self.logger.error(f"Error processing {url}: {e}")
+
+                    try:
+                        next_url = next(url_iter)
+                        future_to_url[executor.submit(self._scrape_with_retry, next_url)] = next_url
+                    except StopIteration:
+                        pass
             
             # Summary
             elapsed_time = time.time() - start_time
             self.logger.info(
-                f"Scraping completed: {success_count}/{len(product_urls)} products "
+                f"Scraping completed: {success_count}/{total_products} products "
                 f"in {elapsed_time:.2f} seconds ({success_count/elapsed_time:.1f} products/sec)"
             )
             
