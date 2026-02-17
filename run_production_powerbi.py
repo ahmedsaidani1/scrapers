@@ -54,7 +54,7 @@ SCRAPERS = [
 DEFAULT_BATCH_SIZE = 1
 DEFAULT_SCRAPER_WORKERS = 4
 DEFAULT_MEMORY_LIMIT_MB = 1700
-DEFAULT_SHEETS_BATCH_SIZE = 1500
+DEFAULT_SHEETS_BATCH_SIZE = 5000
 DEFAULT_WORKSHEET_NAME = "raw_all_products"
 
 
@@ -374,6 +374,15 @@ def run_production_pipeline():
 
     with open(combined_csv, "r", encoding="utf-8") as f:
         actual_rows = max(sum(1 for _ in csv.reader(f)) - 1, 0)
+
+    # Large datasets can hit Sheets write-rate quota if chunks are too small.
+    # Auto-bump chunk size to reduce request count.
+    if actual_rows > 30000 and sheets_batch_size < 5000:
+        print(
+            f"[INFO] Large dataset ({actual_rows:,} rows): increasing "
+            f"SHEETS_BATCH_SIZE from {sheets_batch_size} to 5000"
+        )
+        sheets_batch_size = 5000
 
     print("\n" + "=" * 80)
     print("PUSHING TO GOOGLE SHEETS")

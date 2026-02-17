@@ -6,6 +6,8 @@ import csv
 import json
 import logging
 import os
+import random
+import time
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
 
@@ -35,8 +37,72 @@ class GoogleSheetsHelper:
         """
         self.credentials_file = credentials_file
         self.client = None
+        self._last_write_ts = 0.0
+        self._min_write_interval_sec = self._get_float_env("SHEETS_MIN_WRITE_INTERVAL_SEC", 1.1)
+        self._max_write_retries = self._get_int_env("SHEETS_MAX_WRITE_RETRIES", 8)
         self._ensure_credentials_file()
         self._authenticate()
+
+    def _get_float_env(self, name: str, default: float) -> float:
+        value = os.getenv(name)
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except ValueError:
+            return default
+
+    def _get_int_env(self, name: str, default: int) -> int:
+        value = os.getenv(name)
+        if value is None:
+            return default
+        try:
+            return int(value)
+        except ValueError:
+            return default
+
+    def _is_retryable_api_error(self, error: Exception) -> bool:
+        """Detect retryable Sheets API errors (quota/rate-limit/transient)."""
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+        message = str(error).lower()
+        if status_code in (429, 500, 502, 503, 504):
+            return True
+        return (
+            "quota exceeded" in message
+            or "rate limit" in message
+            or "resource_exhausted" in message
+            or "write requests per minute" in message
+        )
+
+    def _sheets_write(self, operation, operation_name: str):
+        """
+        Execute a Sheets write operation with rate limiting and retry/backoff.
+        """
+        for attempt in range(self._max_write_retries + 1):
+            wait = self._min_write_interval_sec - (time.time() - self._last_write_ts)
+            if wait > 0:
+                time.sleep(wait)
+
+            try:
+                result = operation()
+                self._last_write_ts = time.time()
+                return result
+            except gspread.exceptions.APIError as e:
+                if not self._is_retryable_api_error(e) or attempt >= self._max_write_retries:
+                    raise
+                backoff = min(60.0, (2 ** attempt) + random.uniform(0.2, 1.2))
+                logger.warning(
+                    "%s failed (attempt %d/%d): %s; retrying in %.1fs",
+                    operation_name,
+                    attempt + 1,
+                    self._max_write_retries + 1,
+                    e,
+                    backoff,
+                )
+                time.sleep(backoff)
+            except Exception:
+                # Non-API errors are not retried here.
+                raise
 
     def _ensure_credentials_file(self) -> None:
         """
@@ -112,6 +178,11 @@ class GoogleSheetsHelper:
             True if successful, False otherwise
         """
         try:
+            total_rows = self._count_csv_rows(csv_file)
+            if total_rows < 1:
+                logger.warning(f"No data found in {csv_file}")
+                return False
+
             header_row, row_iter = self._iter_csv_rows(csv_file)
             if not header_row:
                 logger.warning(f"No data found in {csv_file}")
@@ -134,13 +205,19 @@ class GoogleSheetsHelper:
             # Ensure the worksheet has enough columns for this CSV.
             if worksheet.col_count < num_cols:
                 old_cols = worksheet.col_count
-                worksheet.add_cols(num_cols - old_cols)
+                self._sheets_write(
+                    lambda: worksheet.add_cols(num_cols - old_cols),
+                    f"add columns for worksheet {worksheet_name}",
+                )
                 logger.info(
                     f"Expanded worksheet columns from {old_cols} to at least {num_cols}"
                 )
 
             if clear_existing:
-                worksheet.clear()
+                self._sheets_write(
+                    lambda: worksheet.clear(),
+                    f"clear worksheet {worksheet_name}",
+                )
                 logger.info("Cleared existing worksheet data")
 
             current_max_rows = worksheet.row_count
@@ -150,15 +227,27 @@ class GoogleSheetsHelper:
                 if required_last_row <= current_max_rows:
                     return
                 rows_to_add = required_last_row - current_max_rows
-                worksheet.add_rows(rows_to_add)
+                self._sheets_write(
+                    lambda: worksheet.add_rows(rows_to_add),
+                    f"add rows for worksheet {worksheet_name}",
+                )
                 current_max_rows += rows_to_add
                 logger.info(
                     f"Expanded worksheet rows by {rows_to_add} "
                     f"(new capacity: {current_max_rows})"
                 )
 
+            # Expand rows once up-front to minimize write requests.
+            ensure_row_capacity(total_rows)
             ensure_row_capacity(1)
-            worksheet.update(values=[header_row], range_name="A1", value_input_option="RAW")
+            self._sheets_write(
+                lambda: worksheet.update(
+                    values=[header_row],
+                    range_name="A1",
+                    value_input_option="RAW",
+                ),
+                f"write header to worksheet {worksheet_name}",
+            )
 
             end_col = self._column_to_letter(num_cols)
             safe_batch_size = max(1, int(batch_size))
@@ -173,12 +262,16 @@ class GoogleSheetsHelper:
                     end_row = next_row + len(batch) - 1
                     ensure_row_capacity(end_row)
                     range_name = f"A{next_row}:{end_col}{end_row}"
-                    worksheet.update(
-                        values=batch,
-                        range_name=range_name,
-                        value_input_option="USER_ENTERED",
+                    batch_to_write = batch
+                    self._sheets_write(
+                        lambda b=batch_to_write, r=range_name: worksheet.update(
+                            values=b,
+                            range_name=r,
+                            value_input_option="USER_ENTERED",
+                        ),
+                        f"write batch {next_row}-{end_row} to {worksheet_name}",
                     )
-                    total_data_rows += len(batch)
+                    total_data_rows += len(batch_to_write)
                     next_row = end_row + 1
                     batch = []
 
@@ -186,12 +279,16 @@ class GoogleSheetsHelper:
                 end_row = next_row + len(batch) - 1
                 ensure_row_capacity(end_row)
                 range_name = f"A{next_row}:{end_col}{end_row}"
-                worksheet.update(
-                    values=batch,
-                    range_name=range_name,
-                    value_input_option="USER_ENTERED",
+                batch_to_write = batch
+                self._sheets_write(
+                    lambda b=batch_to_write, r=range_name: worksheet.update(
+                        values=b,
+                        range_name=r,
+                        value_input_option="USER_ENTERED",
+                    ),
+                    f"write final batch {next_row}-{end_row} to {worksheet_name}",
                 )
-                total_data_rows += len(batch)
+                total_data_rows += len(batch_to_write)
 
             self._format_price_columns(
                 worksheet=worksheet,
@@ -238,9 +335,12 @@ class GoogleSheetsHelper:
             if column_name in price_columns:
                 col_letter = self._column_to_letter(idx)
                 range_to_format = f"{col_letter}2:{col_letter}{last_data_row}"
-                worksheet.format(
-                    range_to_format,
-                    {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}},
+                self._sheets_write(
+                    lambda r=range_to_format: worksheet.format(
+                        r,
+                        {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.00"}},
+                    ),
+                    f"format column {column_name} in worksheet",
                 )
                 logger.info(f"Formatted {column_name} column ({col_letter}) as number")
 
@@ -289,6 +389,18 @@ class GoogleSheetsHelper:
                 f.close()
 
         return header, row_generator()
+
+    def _count_csv_rows(self, csv_file: Path) -> int:
+        """
+        Count total CSV rows, including header.
+        Used to pre-size worksheet and reduce API write calls.
+        """
+        try:
+            with open(csv_file, "r", encoding="utf-8", newline="") as f:
+                return sum(1 for _ in csv.reader(f))
+        except FileNotFoundError:
+            logger.error(f"CSV file not found: {csv_file}")
+            return 0
 
     def get_sheet_data(
         self,
