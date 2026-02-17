@@ -47,10 +47,15 @@ class Pumpe24Scraper(BaseScraper):
         # Main category URLs to scrape
         self.category_urls = [
             "https://www.pumpe24.de/pumpen.html",
-            "https://www.pumpe24.de/hauswasserwerke.html",
-            "https://www.pumpe24.de/druckbehaelter.html",
+            "https://www.pumpe24.de/steuerungen.html",
+            "https://www.pumpe24.de/brunnenbau.html",
+            "https://www.pumpe24.de/beregnung.html",
+            "https://www.pumpe24.de/rohre.html",
+            "https://www.pumpe24.de/fittinge.html",
+            "https://www.pumpe24.de/industrie.html",
             "https://www.pumpe24.de/zubehoer.html",
-            "https://www.pumpe24.de/rohre-fittings.html",
+            "https://www.pumpe24.de/geothermie.html",
+            "https://www.pumpe24.de/ersatzteile.html"
         ]
         
         self.logger.info(f"Initialized cloudscraper for {self.base_url}")
