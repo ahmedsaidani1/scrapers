@@ -1,21 +1,23 @@
 """
-Wasserpumpe Scraper with Selenium (JavaScript-rendered site)
+Wasserpumpe Scraper (HTTP only, no Selenium).
 Website: https://wasserpumpe.de
-Platform: Vue.js SPA
+Strategy: sitemap-first discovery with category fallback, then parse product pages
+with JSON-LD + HTML selectors.
 """
-import sys
+import json
+import os
 import re
+import sys
 import time
-from typing import List, Dict, Optional, Any
+from typing import Any, Dict, List, Optional
+from urllib.parse import urljoin, urlparse
+
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+import cloudscraper
+
 from base_scraper import BaseScraper
+from config import SCRAPER_CONFIGS, SHEET_IDS
 from google_sheets_helper import push_data
-from config import SHEET_IDS, SCRAPER_CONFIGS
 
 
 SCRAPER_NAME = "wasserpumpe"
@@ -23,401 +25,610 @@ SCRAPER_NAME = "wasserpumpe"
 
 class WasserpumpeScraper(BaseScraper):
     """
-    Scraper for Wasserpumpe.de using Selenium (Vue.js site requires JavaScript execution).
+    Scraper for Wasserpumpe.de using cloudscraper and plain HTTP parsing.
     """
-    
+
+    SKIP_PATH_PARTS = [
+        "/rechtliches",
+        "/datenschutz",
+        "/impressum",
+        "/uber-uns",
+        "/allgemeine-geschaftsbedingungen",
+        "/review-policy",
+        "/bestsellers",
+        "/kundenservice",
+        "/blog",
+        "/kontakt",
+        "/login",
+        "/typ-wasserpumpe",
+        "/winter-deals",
+        "b2b.wasserpumpe",
+        "/lieferung",
+        "/wahlhilfe",
+        "/pumpenkonfigurator",
+        "/zubehoer",
+        "/warenkorb",
+        "/checkout",
+        "/wishlist",
+        "/account",
+        "/cart",
+    ]
+
     def __init__(self):
         super().__init__(SCRAPER_NAME)
-        
+
         self.config = SCRAPER_CONFIGS.get(SCRAPER_NAME, {})
-        self.base_url = self.config.get("base_url", "https://wasserpumpe.de")
-        
-        # Initialize Selenium driver with memory optimization
-        chrome_options = Options()
-        chrome_options.add_argument('--headless')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-        
-        # Memory optimization for low-RAM environments (512MB)
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--disable-software-rasterizer')
-        chrome_options.add_argument('--disable-extensions')
-        chrome_options.add_argument('--disable-logging')
-        chrome_options.add_argument('--disable-dev-tools')
-        chrome_options.add_argument('--single-process')  # Use single process (less memory)
-        chrome_options.add_argument('--disable-background-networking')
-        chrome_options.add_argument('--disable-default-apps')
-        chrome_options.add_argument('--disable-sync')
-        chrome_options.add_argument('--metrics-recording-only')
-        chrome_options.add_argument('--mute-audio')
-        chrome_options.add_argument('--no-first-run')
-        chrome_options.add_argument('--safebrowsing-disable-auto-update')
-        chrome_options.add_argument('--disable-setuid-sandbox')
-        chrome_options.add_argument('--disable-accelerated-2d-canvas')
-        chrome_options.add_argument('--disable-accelerated-jpeg-decoding')
-        chrome_options.add_argument('--disable-accelerated-mjpeg-decode')
-        chrome_options.add_argument('--disable-accelerated-video-decode')
-        chrome_options.add_argument('--disable-background-timer-throttling')
-        chrome_options.add_argument('--disable-backgrounding-occluded-windows')
-        chrome_options.add_argument('--disable-breakpad')
-        chrome_options.add_argument('--disable-component-extensions-with-background-pages')
-        chrome_options.add_argument('--disable-features=TranslateUI,BlinkGenPropertyTrees')
-        chrome_options.add_argument('--disable-ipc-flooding-protection')
-        chrome_options.add_argument('--disable-renderer-backgrounding')
-        chrome_options.add_argument('--enable-features=NetworkService,NetworkServiceInProcess')
-        chrome_options.add_argument('--force-color-profile=srgb')
-        chrome_options.add_argument('--hide-scrollbars')
-        chrome_options.add_argument('--memory-pressure-off')
-        chrome_options.add_argument('--disable-hang-monitor')
-        chrome_options.add_argument('--disable-prompt-on-repost')
-        chrome_options.add_argument('--disable-domain-reliability')
-        chrome_options.add_argument('--disable-features=AudioServiceOutOfProcess')
-        chrome_options.add_argument('--window-size=1024,768')  # Smaller window = less memory
-        
-        self.driver = webdriver.Chrome(options=chrome_options)
-        
-        # Main category URLs to scrape
-        self.category_urls = [
-            "https://wasserpumpe.de/tauchpumpe",
-            "https://wasserpumpe.de/gartenpumpe",
-            "https://wasserpumpe.de/hauswasserwerk",
-        ]
-        
-        self.logger.info(f"Initialized Selenium driver for {self.base_url}")
-    
-    
-    def __del__(self):
-        """Cleanup Selenium driver."""
-        try:
-            if hasattr(self, 'driver'):
-                self.driver.quit()
-        except:
-            pass
-    
-    def get_product_urls(self, max_urls: int = None) -> List[str]:
-        """
-        Get product URLs from category pages (Vue.js site).
-        """
-        product_urls = []
-        
-        try:
-            for category_url in self.category_urls:
-                self.logger.info(f"Fetching category: {category_url}")
-                
-                self.driver.get(category_url)
-                time.sleep(5)  # Wait for JavaScript to load
-                
-                # Find product links
-                try:
-                    # Look for product links in the rendered page
-                    links = self.driver.find_elements(By.CSS_SELECTOR, 'a[href]')
-                    
-                    for link in links:
-                        href = link.get_attribute('href')
-                        
-                        if not href or 'wasserpumpe.de' not in href:
-                            continue
-                        
-                        # Normalize URL
-                        href = href.split('?')[0].split('#')[0]  # Remove query params and fragments
-                        
-                        # Filter for product pages (not categories or info pages)
-                        if any(skip in href for skip in [
-                            '/rechtliches', '/datenschutz', '/impressum', '/uber-uns',
-                            '/allgemeine-geschaftsbedingungen', '/review-policy', 
-                            '/bestsellers', '/kundenservice', '/blog', '/kontakt',
-                            '/login', '/typ-wasserpumpe', '/winter-deals',
-                            'b2b.wasserpumpe', '/lieferung', '/wahlhilfe',
-                            '/pumpenkonfigurator', '/zubehoer'
-                        ]):
-                            continue
-                        
-                        # Skip if it's the category URL itself
-                        if href == category_url or href + '/' == category_url or href == category_url + '/':
-                            continue
-                        
-                        # Products typically have longer paths with multiple dashes
-                        path = href.replace('https://www.wasserpumpe.de/', '').replace('https://wasserpumpe.de/', '')
-                        
-                        # Look for product-like patterns:
-                        # - Has at least 3 dashes (e.g., dab-nova-up-300-m-ae-flachsauger-tauchpumpe)
-                        # - Not ending with slash (categories often end with /)
-                        # - Not too short (categories are usually short like /tauchpumpe)
-                        if path.count('-') >= 3 and not path.endswith('/') and len(path) > 15:
-                            if href not in product_urls:
-                                product_urls.append(href)
-                                self.logger.debug(f"Found product: {href}")
-                
-                except Exception as e:
-                    self.logger.error(f"Error extracting links from {category_url}: {e}")
-                
-                if max_urls and len(product_urls) >= max_urls:
-                    break
-            
-            self.logger.info(f"Found {len(product_urls)} product URLs")
-            
-        except Exception as e:
-            self.logger.error(f"Error getting product URLs: {e}", exc_info=True)
-        
-        return product_urls[:max_urls] if max_urls else product_urls
-    
-    
-    def scrape_product(self, url: str) -> Optional[Dict[str, Any]]:
-        """Scrape individual product page using Selenium."""
-        try:
-            self.driver.get(url)
-            time.sleep(3)  # Wait for JavaScript to render
-            
-            # Get page source after JavaScript execution
-            page_source = self.driver.page_source
-            soup = BeautifulSoup(page_source, 'html.parser')
-            
-            # Extract product name/title
-            product_name = ""
-            try:
-                h1 = self.driver.find_element(By.TAG_NAME, 'h1')
-                product_name = h1.text.strip()
-            except:
-                product_name = self._extract_text(soup, [
-                    'h1.page-title span',
-                    'h1.product-name',
-                    'h1[itemprop="name"]',
-                    'h1'
-                ])
-            
-            if not product_name:
-                self.logger.warning(f"No product name found for {url}")
-                return None
-            
-            manufacturer = self._extract_text(soup, [
-                'a.product-manufacturer',
-                'span[itemprop="brand"]',
-                'div.product-brand',
-                'meta[itemprop="brand"]',
-                '[itemprop="brand"]'
-            ])
-            
-            category = self._extract_text(soup, [
-                'ul.breadcrumbs li:nth-last-child(2) a',
-                'nav.breadcrumb li:nth-last-child(2) a',
-                'div.breadcrumbs a:last-of-type'
-            ])
-            
-            article_number = self._extract_text(soup, [
-                'div.product-info-stock-sku div.value',
-                'span[itemprop="sku"]',
-                'div.product-sku',
-                'meta[itemprop="sku"]',
-                '[itemprop="sku"]'
-            ])
-            
-            # Extract price - look for price in rendered content
-            price_gross_raw = ""
-            try:
-                # Try to find price elements with Selenium first
-                price_elements = self.driver.find_elements(By.CSS_SELECTOR, '[class*="price"]')
-                for elem in price_elements:
-                    text = elem.text.strip()
-                    # Look for price pattern (number with comma/dot)
-                    if re.search(r'\d+[,\.]\d{2}', text):
-                        price_gross_raw = text
-                        break
-            except:
-                pass
-            
-            # Fallback to BeautifulSoup
-            if not price_gross_raw:
-                price_gross_raw = self._extract_text(soup, [
-                    'span.price',
-                    'span[itemprop="price"]',
-                    'div.product-info-price span.price',
-                    'meta[itemprop="price"]'
-                ])
-            
-            # Also check JSON-LD data
-            if not price_gross_raw:
-                try:
-                    # Look for price in page source using regex
-                    price_match = re.search(r'"price":\s*"?([\d,\.]+)"?', page_source)
-                    if price_match:
-                        price_gross_raw = price_match.group(1)
-                except:
-                    pass
-            
-            price_gross = self._clean_price(price_gross_raw)
-            
-            # Calculate net price
-            price_net = ""
-            if price_gross:
-                try:
-                    gross_float = float(price_gross.replace(',', '.'))
-                    net_float = gross_float / 1.19
-                    price_net = f"{net_float:.2f}".replace('.', ',')
-                except:
-                    pass
-            
-            ean = self._extract_text(soup, [
-                'span[itemprop="gtin13"]',
-                'div.product-ean',
-                'meta[itemprop="gtin13"]'
-            ])
-            
-            product_image = self._extract_image(soup, [
-                'img.gallery-placeholder__image',
-                'img[itemprop="image"]',
-                'div.product-image-container img',
-                'meta[property="og:image"]'
-            ])
-            
-            product_data = {
-                'manufacturer': manufacturer,
-                'category': category,
-                'name': product_name,
-                'title': product_name,
-                'article_number': article_number,
-                'price_net': price_net,
-                'price_gross': price_gross,
-                'ean': ean,
-                'product_image': product_image,
-                'product_url': url
+        self.base_url = self.config.get("base_url", "https://wasserpumpe.de").rstrip("/")
+        self.sitemap_url = self.config.get("sitemap_url", f"{self.base_url}/sitemap.xml")
+        self.proxy = os.getenv("WASSERPUMPE_PROXY") or self.config.get("proxy")
+
+        self.request_headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        }
+
+        self.scraper = cloudscraper.create_scraper(
+            browser={
+                "browser": "chrome",
+                "platform": "windows",
+                "mobile": False,
             }
-            
-            return product_data
-            
-        except Exception as e:
-            self.logger.error(f"Error scraping {url}: {e}", exc_info=True)
-            return None
-    
-    def _extract_text(self, soup, selectors: List[str], default: str = "") -> str:
-        """Try multiple selectors and return first match."""
-        for selector in selectors:
-            if selector.startswith('meta'):
-                meta = soup.select_one(selector)
-                if meta and meta.get('content'):
-                    return meta.get('content').strip()
-            else:
-                element = soup.select_one(selector)
-                if element:
-                    text = element.text.strip() if hasattr(element, 'text') else element.get('content', '')
-                    if text:
-                        return text.strip()
-        return default
-    
-    def _extract_image(self, soup, selectors: List[str]) -> str:
-        """Extract image URL."""
-        for selector in selectors:
-            if selector.startswith('meta'):
-                meta = soup.select_one(selector)
-                if meta and meta.get('content'):
-                    url = meta.get('content')
-                    if url.startswith('//'):
-                        url = 'https:' + url
-                    elif url.startswith('/'):
-                        url = self.base_url + url
-                    return url
-            else:
-                img = soup.select_one(selector)
-                if img:
-                    for attr in ['src', 'data-src', 'data-lazy-src']:
-                        if attr in img.attrs:
-                            url = img[attr]
-                            if url.startswith('//'):
-                                url = 'https:' + url
-                            elif url.startswith('/'):
-                                url = self.base_url + url
-                            return url
-        return ""
-    
-    def _clean_price(self, price_str: str) -> str:
-        """Clean price format - extract only the first valid price."""
-        if not price_str:
-            return ""
-        
-        # Remove currency symbols and extra whitespace
-        price = price_str.replace('€', '').replace('EUR', '').strip()
-        
-        # Find the first price pattern (digits with comma or dot as decimal separator)
-        # Match patterns like: 189,90 or 189.90
-        match = re.search(r'(\d+[,\.]\d{2})', price)
-        if match:
-            return match.group(1)
-        
-        # If no decimal found, try to find just digits
-        match = re.search(r'(\d+)', price)
-        if match:
-            return match.group(1)
-        
-        return ""
-    
-    
-    def run(self, max_products: int = None, concurrent_workers: int = 1) -> int:
-        """Run the scraper with optional product limit. Note: Selenium doesn't support concurrent workers."""
-        try:
-            self.logger.info(f"Starting {SCRAPER_NAME} scraper...")
-            
-            product_urls = self.get_product_urls(max_urls=max_products)
-            
-            if not product_urls:
-                self.logger.error("No product URLs found")
-                return 0
-            
-            self.logger.info(f"Found {len(product_urls)} products to scrape")
-            
-            # Scrape products sequentially (Selenium doesn't support concurrent execution well)
-            success_count = 0
-            
-            for i, url in enumerate(product_urls, 1):
-                if i % 10 == 0:
-                    self.logger.info(f"Progress: {i}/{len(product_urls)} products processed")
-                
-                try:
-                    product_data = self.scrape_product(url)
-                    
-                    if product_data:
-                        self.save_product(product_data)
-                        success_count += 1
-                
-                except Exception as e:
-                    self.logger.error(f"Error processing {url}: {e}")
-            
-            self.logger.info(f"Scraping completed: {success_count}/{len(product_urls)} products")
-            
-            return success_count
-            
-        except Exception as e:
-            self.logger.error(f"Error in run: {e}", exc_info=True)
-            return 0
-        finally:
-            # Cleanup driver
+        )
+        if self.proxy:
+            self.scraper.proxies = {
+                "http": self.proxy,
+                "https": self.proxy,
+            }
+            self.logger.info("Using proxy for wasserpumpe requests")
+
+        self.category_urls = [
+            f"{self.base_url}/tauchpumpe",
+            f"{self.base_url}/gartenpumpe",
+            f"{self.base_url}/hauswasserwerk",
+        ]
+
+        self.logger.info(f"Initialized HTTP scraper for {self.base_url}")
+        self._warm_up_session()
+
+    def _warm_up_session(self) -> None:
+        warmup_urls = [
+            self.base_url,
+            f"{self.base_url}/robots.txt",
+        ]
+        for warmup_url in warmup_urls:
             try:
-                self.driver.quit()
-            except:
-                pass
+                response = self.scraper.get(
+                    warmup_url,
+                    headers=self.request_headers,
+                    timeout=20,
+                    allow_redirects=True,
+                )
+                self.logger.info(f"Warm-up {warmup_url}: HTTP {response.status_code}")
+                if response.status_code != 403:
+                    return
+            except Exception as exc:
+                self.logger.debug(f"Warm-up failed for {warmup_url}: {exc}")
+
+    def make_request(self, url: str, **kwargs):
+        headers = dict(self.request_headers)
+        headers.update(kwargs.pop("headers", {}))
+
+        attempts = kwargs.pop("attempts", 3)
+        timeout = kwargs.pop("timeout", 35)
+
+        for attempt in range(1, attempts + 1):
+            try:
+                response = self.scraper.get(
+                    url,
+                    headers=headers,
+                    timeout=timeout,
+                    allow_redirects=True,
+                    **kwargs,
+                )
+                if response.status_code == 403:
+                    self.logger.warning(f"403 for {url} (attempt {attempt}/{attempts})")
+                    self._warm_up_session()
+                    time.sleep(1.5 * attempt)
+                    continue
+
+                response.raise_for_status()
+                return response
+            except Exception as exc:
+                if attempt == attempts:
+                    self.logger.error(f"Request failed for {url}: {exc}")
+                else:
+                    self.logger.warning(
+                        f"Retrying {url} after error (attempt {attempt}/{attempts}): {exc}"
+                    )
+                    time.sleep(1.0 * attempt)
+
+        return None
+
+    def _normalize_url(self, raw_url: str) -> str:
+        if not raw_url:
+            return ""
+
+        candidate = raw_url.strip()
+        if not candidate:
+            return ""
+
+        if candidate.startswith("//"):
+            candidate = "https:" + candidate
+
+        normalized = urljoin(self.base_url + "/", candidate)
+        parsed = urlparse(normalized)
+
+        if parsed.scheme not in ("http", "https"):
+            return ""
+        if "wasserpumpe.de" not in parsed.netloc.lower():
+            return ""
+
+        clean = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        if clean != self.base_url and clean.endswith("/"):
+            clean = clean[:-1]
+        return clean
+
+    def _is_product_url(self, raw_url: str) -> bool:
+        url = self._normalize_url(raw_url)
+        if not url:
+            return False
+
+        path = urlparse(url).path.lower()
+        if path in ("", "/"):
+            return False
+
+        if path in ("/tauchpumpe", "/gartenpumpe", "/hauswasserwerk"):
+            return False
+
+        if path.endswith(".xml") or "sitemap" in path:
+            return False
+
+        for skip_part in self.SKIP_PATH_PARTS:
+            if skip_part in path:
+                return False
+
+        slug = path.strip("/").split("/")[-1]
+        if len(slug) < 12:
+            return False
+        if slug.count("-") < 2 and not any(ch.isdigit() for ch in slug):
+            return False
+
+        return True
+
+    def _extract_urls_from_text(self, text: str) -> List[str]:
+        if not text:
+            return []
+
+        matches = re.findall(
+            r"https?://(?:www\.)?wasserpumpe\.de/[a-zA-Z0-9\-/]+",
+            text,
+        )
+        product_urls = []
+        seen = set()
+        for match in matches:
+            url = self._normalize_url(match)
+            if url and self._is_product_url(url) and url not in seen:
+                seen.add(url)
+                product_urls.append(url)
+        return product_urls
+
+    def _extract_urls_from_sitemap(self, max_urls: Optional[int] = None) -> List[str]:
+        product_urls = []
+        seen_products = set()
+        visited_sitemaps = set()
+        queue = [self.sitemap_url]
+        max_sitemaps = 120
+
+        while queue and len(visited_sitemaps) < max_sitemaps:
+            sitemap = queue.pop(0)
+            if sitemap in visited_sitemaps:
+                continue
+            visited_sitemaps.add(sitemap)
+
+            response = self.make_request(sitemap, attempts=2, timeout=30)
+            if not response:
+                continue
+
+            soup = BeautifulSoup(response.text, "xml")
+            locs = [loc.get_text(strip=True) for loc in soup.find_all("loc")]
+
+            for loc in locs:
+                loc_lower = loc.lower()
+
+                if loc_lower.endswith(".xml") or "sitemap" in loc_lower:
+                    next_sitemap = self._normalize_url(loc)
+                    if next_sitemap and next_sitemap not in visited_sitemaps:
+                        queue.append(next_sitemap)
+                    continue
+
+                url = self._normalize_url(loc)
+                if not url:
+                    continue
+
+                if self._is_product_url(url) and url not in seen_products:
+                    seen_products.add(url)
+                    product_urls.append(url)
+                    if max_urls and len(product_urls) >= max_urls:
+                        return product_urls
+
+        return product_urls
+
+    def _extract_urls_from_categories(self, max_urls: Optional[int] = None) -> List[str]:
+        product_urls = []
+        seen = set()
+
+        for idx, category_url in enumerate(self.category_urls, 1):
+            self.logger.info(
+                f"[{idx}/{len(self.category_urls)}] Scraping category: {category_url}"
+            )
+            response = self.make_request(category_url, attempts=3, timeout=35)
+            if not response:
+                continue
+
+            soup = self.parse_html(response.text)
+
+            for anchor in soup.select("a[href]"):
+                href = anchor.get("href", "")
+                url = self._normalize_url(href)
+                if url and self._is_product_url(url) and url not in seen:
+                    seen.add(url)
+                    product_urls.append(url)
+
+            # Extra fallback: parse URLs from embedded scripts/text.
+            if len(product_urls) < 10:
+                script_urls = self._extract_urls_from_text(response.text)
+                for url in script_urls:
+                    if url not in seen:
+                        seen.add(url)
+                        product_urls.append(url)
+
+            self.logger.info(
+                f"  Category yielded {len(product_urls)} product URLs total"
+            )
+
+            if max_urls and len(product_urls) >= max_urls:
+                return product_urls[:max_urls]
+
+            time.sleep(1.2)
+
+        return product_urls
+
+    def get_product_urls(self, max_urls: int = None) -> List[str]:
+        all_urls = []
+        seen = set()
+
+        self.logger.info("Fetching product URLs from sitemap...")
+        sitemap_urls = self._extract_urls_from_sitemap(max_urls=max_urls)
+        self.logger.info(f"Sitemap found {len(sitemap_urls)} candidate product URLs")
+
+        for url in sitemap_urls:
+            if url not in seen:
+                seen.add(url)
+                all_urls.append(url)
+
+        # Category fallback if sitemap is blocked/incomplete.
+        if len(all_urls) < 40:
+            self.logger.info(
+                f"Low URL count ({len(all_urls)}). Trying category-based discovery..."
+            )
+            category_urls = self._extract_urls_from_categories(max_urls=max_urls)
+            for url in category_urls:
+                if url not in seen:
+                    seen.add(url)
+                    all_urls.append(url)
+                    if max_urls and len(all_urls) >= max_urls:
+                        break
+
+        self.logger.info(f"Total product URLs found: {len(all_urls)}")
+        if max_urls:
+            return all_urls[:max_urls]
+        return all_urls
+
+    def _extract_text(self, soup: BeautifulSoup, selectors: List[str], default: str = "") -> str:
+        for selector in selectors:
+            element = soup.select_one(selector)
+            if not element:
+                continue
+
+            if element.name == "meta":
+                value = (element.get("content") or "").strip()
+            else:
+                value = element.get_text(" ", strip=True).strip()
+
+            if value:
+                return value
+
+        return default
+
+    def _extract_image(self, soup: BeautifulSoup, selectors: List[str]) -> str:
+        for selector in selectors:
+            element = soup.select_one(selector)
+            if not element:
+                continue
+
+            if element.name == "meta":
+                candidate = (element.get("content") or "").strip()
+            else:
+                candidate = ""
+                for attr in ("src", "data-src", "data-lazy-src", "srcset"):
+                    value = (element.get(attr) or "").strip()
+                    if not value:
+                        continue
+                    if attr == "srcset":
+                        value = value.split(",")[0].split()[0]
+                    candidate = value
+                    break
+
+            if not candidate:
+                continue
+
+            if candidate.startswith("//"):
+                return "https:" + candidate
+            if candidate.startswith("/"):
+                return self.base_url + candidate
+            return candidate
+
+        return ""
+
+    def _clean_price(self, raw_price: str) -> str:
+        if not raw_price:
+            return ""
+
+        text = str(raw_price).replace("\xa0", " ").strip()
+        matches = re.findall(r"\d{1,3}(?:[.\s]\d{3})*(?:,\d+)?|\d+(?:[.,]\d+)?", text)
+        if not matches:
+            return ""
+
+        candidate = matches[-1].replace(" ", "")
+
+        if "," in candidate and "." in candidate:
+            if candidate.rfind(",") > candidate.rfind("."):
+                normalized = candidate.replace(".", "").replace(",", ".")
+            else:
+                normalized = candidate.replace(",", "")
+        elif "," in candidate:
+            normalized = candidate.replace(".", "").replace(",", ".")
+        else:
+            if candidate.count(".") > 1:
+                normalized = candidate.replace(".", "")
+            else:
+                normalized = candidate
+
+        try:
+            value = float(normalized)
+            return f"{value:.2f}".replace(".", ",")
+        except ValueError:
+            return ""
+
+    def _calc_net_price(self, gross_price: str) -> str:
+        if not gross_price:
+            return ""
+        try:
+            gross = float(gross_price.replace(".", "").replace(",", "."))
+            net = gross / 1.19
+            return f"{net:.2f}".replace(".", ",")
+        except ValueError:
+            return ""
+
+    def _extract_product_from_json_ld(self, soup: BeautifulSoup) -> Dict[str, str]:
+        result = {
+            "name": "",
+            "manufacturer": "",
+            "article_number": "",
+            "price_gross": "",
+            "ean": "",
+            "image": "",
+            "category": "",
+        }
+
+        scripts = soup.find_all("script", {"type": "application/ld+json"})
+        for script in scripts:
+            raw = script.string or script.get_text(strip=True)
+            if not raw:
+                continue
+
+            try:
+                payload = json.loads(raw)
+            except Exception:
+                continue
+
+            candidates = []
+            if isinstance(payload, dict):
+                candidates.append(payload)
+                graph = payload.get("@graph")
+                if isinstance(graph, list):
+                    candidates.extend(item for item in graph if isinstance(item, dict))
+            elif isinstance(payload, list):
+                candidates.extend(item for item in payload if isinstance(item, dict))
+
+            for item in candidates:
+                type_value = item.get("@type", "")
+                if isinstance(type_value, list):
+                    is_product = any(str(t).lower() == "product" for t in type_value)
+                else:
+                    is_product = str(type_value).lower() == "product"
+
+                if not is_product:
+                    continue
+
+                name = item.get("name")
+                if isinstance(name, str):
+                    result["name"] = name.strip()
+
+                brand = item.get("brand")
+                if isinstance(brand, dict):
+                    result["manufacturer"] = str(brand.get("name", "")).strip()
+                elif isinstance(brand, str):
+                    result["manufacturer"] = brand.strip()
+
+                result["article_number"] = str(
+                    item.get("sku") or item.get("mpn") or item.get("productID") or ""
+                ).strip()
+
+                result["ean"] = str(
+                    item.get("gtin13")
+                    or item.get("gtin14")
+                    or item.get("gtin12")
+                    or item.get("gtin8")
+                    or ""
+                ).strip()
+
+                image = item.get("image")
+                if isinstance(image, list) and image:
+                    result["image"] = str(image[0]).strip()
+                elif isinstance(image, str):
+                    result["image"] = image.strip()
+
+                result["category"] = str(item.get("category", "")).strip()
+
+                offers = item.get("offers")
+                if isinstance(offers, list) and offers:
+                    offers = offers[0]
+                if isinstance(offers, dict):
+                    price = offers.get("price")
+                    if price is not None:
+                        result["price_gross"] = self._clean_price(str(price))
+
+                return result
+
+        return result
+
+    def scrape_product(self, url: str) -> Optional[Dict[str, Any]]:
+        response = self.make_request(url, attempts=3, timeout=35)
+        if not response:
+            return None
+
+        try:
+            soup = self.parse_html(response.text)
+            json_ld = self._extract_product_from_json_ld(soup)
+
+            product_name = json_ld["name"] or self._extract_text(
+                soup,
+                [
+                    "h1.page-title span",
+                    "h1.product-name",
+                    "h1[itemprop='name']",
+                    "h1",
+                ],
+            )
+            if not product_name:
+                return None
+
+            manufacturer = json_ld["manufacturer"] or self._extract_text(
+                soup,
+                [
+                    "a.product-manufacturer",
+                    "span[itemprop='brand']",
+                    "div.product-brand",
+                    "meta[itemprop='brand']",
+                    "[itemprop='brand'] [itemprop='name']",
+                ],
+            )
+
+            category = json_ld["category"] or self._extract_text(
+                soup,
+                [
+                    "ul.breadcrumbs li:nth-last-child(2) a",
+                    "nav.breadcrumb li:nth-last-child(2) a",
+                    "div.breadcrumbs a:last-of-type",
+                ],
+            )
+
+            article_number = json_ld["article_number"] or self._extract_text(
+                soup,
+                [
+                    "div.product-info-stock-sku div.value",
+                    "span[itemprop='sku']",
+                    "div.product-sku",
+                    "meta[itemprop='sku']",
+                    "[itemprop='sku']",
+                ],
+            )
+
+            price_gross = json_ld["price_gross"]
+            if not price_gross:
+                price_raw = self._extract_text(
+                    soup,
+                    [
+                        "span.price",
+                        "span[itemprop='price']",
+                        "div.product-info-price span.price",
+                        "meta[itemprop='price']",
+                    ],
+                )
+                if not price_raw:
+                    match = re.search(r"\d{1,3}(?:\.\d{3})*,\d{2}(?:\s*EUR)?", response.text)
+                    if match:
+                        price_raw = match.group(0)
+                price_gross = self._clean_price(price_raw)
+
+            price_net = self._calc_net_price(price_gross)
+
+            ean = json_ld["ean"] or self._extract_text(
+                soup,
+                [
+                    "span[itemprop='gtin13']",
+                    "span[itemprop='gtin14']",
+                    "div.product-ean",
+                    "meta[itemprop='gtin13']",
+                    "meta[itemprop='gtin14']",
+                ],
+            )
+
+            product_image = json_ld["image"] or self._extract_image(
+                soup,
+                [
+                    "meta[property='og:image']",
+                    "img.gallery-placeholder__image",
+                    "img[itemprop='image']",
+                    "div.product-image-container img",
+                ],
+            )
+
+            return {
+                "manufacturer": manufacturer,
+                "category": category,
+                "name": product_name,
+                "title": product_name,
+                "article_number": article_number,
+                "price_net": price_net,
+                "price_gross": price_gross,
+                "ean": ean,
+                "product_image": product_image,
+                "product_url": url,
+            }
+
+        except Exception as exc:
+            self.logger.error(f"Error scraping {url}: {exc}", exc_info=True)
+            return None
 
 
 def main():
-    """Main execution."""
     scraper = WasserpumpeScraper()
     success_count = scraper.run()
-    
+
     if "--push-to-sheets" in sys.argv and success_count > 0:
         sheet_id = SHEET_IDS.get(SCRAPER_NAME)
-        
         if sheet_id and sheet_id != "TBD":
-            print(f"\nPushing data to Google Sheets...")
+            print("\nPushing data to Google Sheets...")
             if push_data(sheet_id, scraper.get_output_file()):
-                print("✓ Successfully pushed to Google Sheets")
+                print("Successfully pushed to Google Sheets")
             else:
-                print("✗ Failed to push to Google Sheets")
+                print("Failed to push to Google Sheets")
         else:
-            print(f"\n⚠ No Google Sheet ID configured for {SCRAPER_NAME}")
-    
-    print(f"\n{'='*60}")
+            print(f"\nNo Google Sheet ID configured for {SCRAPER_NAME}")
+
+    print(f"\n{'=' * 60}")
     print(f"Completed: {success_count} products scraped")
     print(f"Output: {scraper.get_output_file()}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":
