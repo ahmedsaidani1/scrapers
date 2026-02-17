@@ -13,7 +13,7 @@ from typing import List, Dict, Optional, Any
 from abc import ABC, abstractmethod
 from bs4 import BeautifulSoup   
 from logging.handlers import RotatingFileHandler
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from requests.adapters import HTTPAdapter
 
 from config import (
@@ -343,6 +343,7 @@ class BaseScraper(ABC):
             # Scrape products concurrently with bounded in-flight futures.
             # This avoids creating one Future per URL (large memory spike).
             success_count = 0
+            no_data_count = 0
             processed_count = 0
             total_products = len(product_urls)
             max_in_flight = max(concurrent_workers * 4, concurrent_workers)
@@ -362,36 +363,43 @@ class BaseScraper(ABC):
                     future_to_url[executor.submit(self._scrape_with_retry, url)] = url
 
                 while future_to_url:
-                    # Process one completed future at a time, then refill queue
-                    future = next(as_completed(future_to_url))
-                    url = future_to_url.pop(future)
-                    processed_count += 1
+                    # Process all currently completed futures in one shot, then refill queue.
+                    done, _ = wait(
+                        set(future_to_url.keys()),
+                        return_when=FIRST_COMPLETED,
+                    )
 
-                    if processed_count % 100 == 0:
-                        self.logger.info(
-                            f"Progress: {processed_count}/{total_products} products processed"
-                        )
+                    for future in done:
+                        url = future_to_url.pop(future)
+                        processed_count += 1
 
-                    try:
-                        product_data = future.result()
+                        if processed_count % 100 == 0:
+                            self.logger.info(
+                                f"Progress: {processed_count}/{total_products} products processed"
+                            )
 
-                        if product_data:
-                            output_buffer.append(product_data)
-                            if len(output_buffer) >= csv_buffer_size:
-                                self.save_products(output_buffer)
-                                output_buffer = []
-                            success_count += 1
-                        else:
-                            self.logger.warning(f"No data extracted from {url}")
+                        try:
+                            product_data = future.result()
 
-                    except Exception as e:
-                        self.logger.error(f"Error processing {url}: {e}")
+                            if product_data:
+                                output_buffer.append(product_data)
+                                if len(output_buffer) >= csv_buffer_size:
+                                    self.save_products(output_buffer)
+                                    output_buffer = []
+                                success_count += 1
+                            else:
+                                no_data_count += 1
+                                if no_data_count <= 20 or no_data_count % 500 == 0:
+                                    self.logger.warning(f"No data extracted from {url}")
 
-                    try:
-                        next_url = next(url_iter)
-                        future_to_url[executor.submit(self._scrape_with_retry, next_url)] = next_url
-                    except StopIteration:
-                        pass
+                        except Exception as e:
+                            self.logger.error(f"Error processing {url}: {e}")
+
+                        try:
+                            next_url = next(url_iter)
+                            future_to_url[executor.submit(self._scrape_with_retry, next_url)] = next_url
+                        except StopIteration:
+                            pass
 
             if output_buffer:
                 self.save_products(output_buffer)

@@ -4,6 +4,7 @@ Website: https://www.meinhausshop.de
 Platform: Shopware
 """
 import sys
+import os
 import re
 import gzip
 from typing import List, Dict, Optional, Any
@@ -92,11 +93,18 @@ class MeinHausShopScraper(BaseScraper):
             
             soup = BeautifulSoup(response.text, "xml")
             sitemap_locs = soup.find_all('loc')
-            
+            selected_parts = self._get_selected_sitemap_parts(len(sitemap_locs))
+            if selected_parts:
+                self.logger.info(
+                    f"Sitemap part filter active: processing parts {sorted(selected_parts)} only"
+                )
+             
             self.logger.info(f"Found {len(sitemap_locs)} sub-sitemaps")
-            
+             
             # Process each compressed sitemap
             for i, loc in enumerate(sitemap_locs, 1):
+                if selected_parts and i not in selected_parts:
+                    continue
                 sitemap_gz_url = loc.text.strip()
                 self.logger.info(f"Processing sitemap {i}/{len(sitemap_locs)}: {sitemap_gz_url}")
                 
@@ -136,6 +144,28 @@ class MeinHausShopScraper(BaseScraper):
             self.logger.error(f"Error getting product URLs: {e}", exc_info=True)
         
         return product_urls
+
+    def _get_selected_sitemap_parts(self, total_parts: int) -> Optional[set]:
+        """
+        Parse optional env filter for sitemap parts.
+        Example: MEINHAUSSHOP_SITEMAP_PARTS="1,2" or "4"
+        """
+        raw = (os.getenv("MEINHAUSSHOP_SITEMAP_PARTS") or "").strip()
+        if not raw:
+            return None
+
+        selected = set()
+        for piece in raw.split(","):
+            token = piece.strip()
+            if not token:
+                continue
+            try:
+                idx = int(token)
+            except ValueError:
+                continue
+            if 1 <= idx <= total_parts:
+                selected.add(idx)
+        return selected or None
     
     def scrape_product(self, url: str) -> Optional[Dict[str, Any]]:
         """
