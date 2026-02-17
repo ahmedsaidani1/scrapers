@@ -7,6 +7,7 @@ import sys
 import re
 import gzip
 from typing import List, Dict, Optional, Any
+from bs4 import BeautifulSoup
 from base_scraper import BaseScraper
 from google_sheets_helper import push_data
 from config import SHEET_IDS, SCRAPER_CONFIGS
@@ -89,7 +90,7 @@ class MeinHausShopScraper(BaseScraper):
                 self.logger.error("Failed to fetch main sitemap")
                 return product_urls
             
-            soup = self.parse_html(response.text)
+            soup = BeautifulSoup(response.text, "xml")
             sitemap_locs = soup.find_all('loc')
             
             self.logger.info(f"Found {len(sitemap_locs)} sub-sitemaps")
