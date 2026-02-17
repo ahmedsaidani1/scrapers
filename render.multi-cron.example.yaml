@@ -115,9 +115,25 @@ services:
       - key: PIPELINE_BATCH_SIZE
         value: "1"
       - key: SCRAPER_WORKERS
-        value: "5"
+        value: "18"
+      - key: PIPELINE_MEMORY_LIMIT_MB
+        value: "7000"
+      - key: SCRAPER_HTTP_POOL_CONNECTIONS
+        value: "80"
+      - key: SCRAPER_HTTP_POOL_MAXSIZE
+        value: "80"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "500"
+      - key: SCRAPER_REQUEST_TIMEOUT
+        value: "10"
+      - key: SCRAPER_MAX_RETRIES
+        value: "1"
+      - key: SCRAPER_MIN_DELAY
+        value: "0.00"
+      - key: SCRAPER_MAX_DELAY
+        value: "0.02"
       - key: SHEETS_BATCH_SIZE
-        value: "1200"
+        value: "5000"
 
   - type: cron
     name: powerbi-wolfonlineshop

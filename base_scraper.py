@@ -3,6 +3,7 @@ Base scraper class for solar equipment price scraping.
 All individual scrapers should inherit from this class.
 """
 import csv
+import os
 import time
 import random
 import logging
@@ -13,6 +14,7 @@ from abc import ABC, abstractmethod
 from bs4 import BeautifulSoup   
 from logging.handlers import RotatingFileHandler
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from requests.adapters import HTTPAdapter
 
 from config import (
     DATA_DIR, LOGS_DIR, CSV_COLUMNS, REQUEST_TIMEOUT,
@@ -50,6 +52,26 @@ class BaseScraper(ABC):
         """
         self.scraper_name = scraper_name
         self.session = requests.Session()
+
+        # Per-job tuning knobs (useful for very large scrapes on dedicated cron jobs).
+        self.request_timeout = float(os.getenv("SCRAPER_REQUEST_TIMEOUT", REQUEST_TIMEOUT))
+        self.max_retries = max(int(os.getenv("SCRAPER_MAX_RETRIES", MAX_RETRIES)), 1)
+        self.retry_delay = float(os.getenv("SCRAPER_RETRY_DELAY", RETRY_DELAY))
+        self.scrape_min_delay = float(os.getenv("SCRAPER_MIN_DELAY", 0.01))
+        self.scrape_max_delay = float(os.getenv("SCRAPER_MAX_DELAY", 0.05))
+        if self.scrape_max_delay < self.scrape_min_delay:
+            self.scrape_min_delay, self.scrape_max_delay = self.scrape_max_delay, self.scrape_min_delay
+
+        pool_connections = max(int(os.getenv("SCRAPER_HTTP_POOL_CONNECTIONS", "100")), 10)
+        pool_maxsize = max(int(os.getenv("SCRAPER_HTTP_POOL_MAXSIZE", "100")), 10)
+        adapter = HTTPAdapter(
+            pool_connections=pool_connections,
+            pool_maxsize=pool_maxsize,
+            max_retries=0,
+        )
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+
         self.output_file = DATA_DIR / f"{scraper_name}.csv"
         
         # Setup logging
@@ -135,17 +157,18 @@ class BaseScraper(ABC):
         """
         headers = kwargs.pop('headers', {})
         headers['User-Agent'] = self._get_random_user_agent()
+        timeout = kwargs.pop("timeout", self.request_timeout)
         
         # Disable SSL verification if needed (for sites with expired certs)
         verify_ssl = kwargs.pop('verify', True)
         
-        for attempt in range(MAX_RETRIES):
+        for attempt in range(self.max_retries):
             try:
                 response = self.session.request(
                     method,
                     url,
                     headers=headers,
-                    timeout=REQUEST_TIMEOUT,
+                    timeout=timeout,
                     verify=verify_ssl,
                     **kwargs
                 )
@@ -157,7 +180,7 @@ class BaseScraper(ABC):
             except requests.exceptions.HTTPError as e:
                 self.logger.warning(
                     f"HTTP error {e.response.status_code} for {url} "
-                    f"(attempt {attempt + 1}/{MAX_RETRIES})"
+                    f"(attempt {attempt + 1}/{self.max_retries})"
                 )
                 
                 # Don't retry on 404 or 403
@@ -166,20 +189,20 @@ class BaseScraper(ABC):
                     
             except requests.exceptions.Timeout:
                 self.logger.warning(
-                    f"Timeout for {url} (attempt {attempt + 1}/{MAX_RETRIES})"
+                    f"Timeout for {url} (attempt {attempt + 1}/{self.max_retries})"
                 )
                 
             except requests.exceptions.RequestException as e:
                 self.logger.warning(
                     f"Request failed for {url}: {e} "
-                    f"(attempt {attempt + 1}/{MAX_RETRIES})"
+                    f"(attempt {attempt + 1}/{self.max_retries})"
                 )
             
             # Wait before retrying
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(RETRY_DELAY)
+            if attempt < self.max_retries - 1:
+                time.sleep(self.retry_delay)
         
-        self.logger.error(f"Failed to fetch {url} after {MAX_RETRIES} attempts")
+        self.logger.error(f"Failed to fetch {url} after {self.max_retries} attempts")
         return None
     
     def parse_html(self, html: str) -> BeautifulSoup:
@@ -194,47 +217,54 @@ class BaseScraper(ABC):
         """
         return BeautifulSoup(html, 'html.parser')
     
+    def _map_product_row(self, product_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Map arbitrary scraper keys to canonical CSV columns.
+        """
+
+        def pick(*keys):
+            for key in keys:
+                value = product_data.get(key)
+                if value is not None and str(value).strip() != "":
+                    return value
+            return ""
+
+        row = {
+            "Hersteller": pick("Hersteller", "manufacturer", "brand"),
+            "Kategorie": pick("Kategorie", "category"),
+            "Name": pick("Name", "name", "Titel", "title"),
+            "Titel": pick("Titel", "title", "Name", "name"),
+            "Artikelnummer": pick("Artikelnummer", "article_number", "sku", "mpn"),
+            "Preis_Netto": pick("Preis_Netto", "price_net"),
+            "Preis_Brutto": pick("Preis_Brutto", "price_gross"),
+            "EAN": pick("EAN", "ean", "gtin13", "gtin"),
+            "Produktbild": pick("Produktbild", "product_image", "image", "image_url"),
+            "Produkt_URL": pick("Produkt_URL", "product_url", "url", "link"),
+        }
+
+        # Keep strict column order and include any future columns as empty by default.
+        return {col: row.get(col, "") for col in CSV_COLUMNS}
+
     def save_product(self, product_data: Dict[str, Any]) -> None:
         """
-        Save product data to CSV file.
-        
-        Args:
-            product_data: Dictionary with product information
-                         Must contain all keys from CSV_COLUMNS
+        Save one product row.
         """
+        self.save_products([product_data])
+
+    def save_products(self, products: List[Dict[str, Any]]) -> None:
+        """
+        Save multiple product rows in one append operation.
+        """
+        if not products:
+            return
         try:
-            # Support both German CSV keys and legacy/internal English keys.
-            def pick(*keys):
-                for key in keys:
-                    value = product_data.get(key)
-                    if value is not None and str(value).strip() != "":
-                        return value
-                return ""
-
-            row = {
-                "Hersteller": pick("Hersteller", "manufacturer", "brand"),
-                "Kategorie": pick("Kategorie", "category"),
-                "Name": pick("Name", "name", "Titel", "title"),
-                "Titel": pick("Titel", "title", "Name", "name"),
-                "Artikelnummer": pick("Artikelnummer", "article_number", "sku", "mpn"),
-                "Preis_Netto": pick("Preis_Netto", "price_net"),
-                "Preis_Brutto": pick("Preis_Brutto", "price_gross"),
-                "EAN": pick("EAN", "ean", "gtin13", "gtin"),
-                "Produktbild": pick("Produktbild", "product_image", "image", "image_url"),
-                "Produkt_URL": pick("Produkt_URL", "product_url", "url", "link"),
-            }
-
-            # Keep strict column order and include any future columns as empty by default.
-            row = {col: row.get(col, "") for col in CSV_COLUMNS}
-            
+            rows = [self._map_product_row(product_data) for product_data in products]
             with open(self.output_file, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-                writer.writerow(row)
-            
-            self.logger.debug(f"Saved product: {row.get('Name', 'Unknown')}")
-            
+                writer.writerows(rows)
+            self.logger.debug(f"Saved {len(rows)} products")
         except Exception as e:
-            self.logger.error(f"Failed to save product: {e}")
+            self.logger.error(f"Failed to save products batch: {e}")
     
     @abstractmethod
     def get_product_urls(self) -> List[str]:
@@ -316,6 +346,8 @@ class BaseScraper(ABC):
             processed_count = 0
             total_products = len(product_urls)
             max_in_flight = max(concurrent_workers * 4, concurrent_workers)
+            csv_buffer_size = max(int(os.getenv("SCRAPER_CSV_BUFFER_SIZE", "250")), 1)
+            output_buffer: List[Dict[str, Any]] = []
 
             with ThreadPoolExecutor(max_workers=concurrent_workers) as executor:
                 url_iter = iter(product_urls)
@@ -344,7 +376,10 @@ class BaseScraper(ABC):
                         product_data = future.result()
 
                         if product_data:
-                            self.save_product(product_data)
+                            output_buffer.append(product_data)
+                            if len(output_buffer) >= csv_buffer_size:
+                                self.save_products(output_buffer)
+                                output_buffer = []
                             success_count += 1
                         else:
                             self.logger.warning(f"No data extracted from {url}")
@@ -357,6 +392,9 @@ class BaseScraper(ABC):
                         future_to_url[executor.submit(self._scrape_with_retry, next_url)] = next_url
                     except StopIteration:
                         pass
+
+            if output_buffer:
+                self.save_products(output_buffer)
             
             # Summary
             elapsed_time = time.time() - start_time
@@ -385,8 +423,9 @@ class BaseScraper(ABC):
             Product data dictionary or None
         """
         try:
-            # Small random delay to avoid hammering the server
-            time.sleep(random.uniform(0.05, 0.15))
+            # Small random delay to avoid hammering the server.
+            if self.scrape_max_delay > 0:
+                time.sleep(random.uniform(self.scrape_min_delay, self.scrape_max_delay))
             return self.scrape_product(url)
         except Exception as e:
             self.logger.error(f"Error scraping {url}: {e}")

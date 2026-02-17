@@ -30,6 +30,46 @@ class MeinHausShopScraper(BaseScraper):
         self.base_url = self.config.get("base_url", "https://www.meinhausshop.de")
         
         self.logger.info(f"Initialized scraper for {self.base_url}")
+
+    def _normalize_url(self, raw_url: str) -> str:
+        if not raw_url:
+            return ""
+        url = raw_url.strip().split("?")[0].split("#")[0]
+        if url.endswith("/") and url != self.base_url + "/":
+            url = url[:-1]
+        return url
+
+    def _is_product_url(self, raw_url: str) -> bool:
+        url = self._normalize_url(raw_url)
+        if not url:
+            return False
+        if "meinhausshop.de" not in url:
+            return False
+        if "/web/" in url or "/konto/" in url or "/checkout/" in url:
+            return False
+        if url in (self.base_url, self.base_url + "/"):
+            return False
+        lower_url = url.lower()
+        skip_parts = [
+            "/impressum",
+            "/datenschutz",
+            "/agb",
+            "/widerruf",
+            "/versand",
+            "/kontakt",
+            "/hilfe",
+            "/service",
+            "/blog",
+            "/sitemap",
+        ]
+        if any(part in lower_url for part in skip_parts):
+            return False
+        path = lower_url.replace(self.base_url.lower(), "").strip("/")
+        if not path:
+            return False
+        if len(path) < 8:
+            return False
+        return True
     
     def get_product_urls(self) -> List[str]:
         """
@@ -37,6 +77,7 @@ class MeinHausShopScraper(BaseScraper):
         MeinHausShop uses gzipped sitemap files.
         """
         product_urls = []
+        seen_urls = set()
         
         try:
             # Get main sitemap index
@@ -66,18 +107,23 @@ class MeinHausShopScraper(BaseScraper):
                     
                     # Decompress gzip content
                     decompressed = gzip.decompress(gz_response.content).decode('utf-8')
-                    
-                    # Parse decompressed XML
-                    sitemap_soup = self.parse_html(decompressed)
-                    urls = sitemap_soup.find_all('loc')
-                    
-                    for url_tag in urls:
-                        url = url_tag.text.strip()
-                        # Filter out category pages (they usually have fewer path segments)
-                        if url.count('/') >= 3:  # Product pages have more depth
-                            product_urls.append(url)
-                    
-                    self.logger.info(f"Extracted {len(urls)} URLs from this sitemap")
+
+                    # Regex parsing is faster than full DOM build on very large sitemap files.
+                    urls = re.findall(r"<loc>([^<]+)</loc>", decompressed)
+                    added = 0
+                    for raw_url in urls:
+                        url = self._normalize_url(raw_url)
+                        if not url:
+                            continue
+                        if not self._is_product_url(url):
+                            continue
+                        if url in seen_urls:
+                            continue
+                        seen_urls.add(url)
+                        product_urls.append(url)
+                        added += 1
+
+                    self.logger.info(f"Extracted {added} unique product URLs from this sitemap")
                     
                 except Exception as e:
                     self.logger.error(f"Error processing sitemap {sitemap_gz_url}: {e}")
@@ -123,12 +169,6 @@ class MeinHausShopScraper(BaseScraper):
                 'meta[itemprop="brand"]'
             ])
             
-            # Try meta tag for brand
-            if not manufacturer:
-                brand_meta = soup.select_one('meta[itemprop="brand"]')
-                if brand_meta:
-                    manufacturer = brand_meta.get('content', '')
-            
             # Extract article number/SKU
             article_number = self._extract_text(soup, [
                 'span.product-detail-ordernumber',
@@ -136,12 +176,6 @@ class MeinHausShopScraper(BaseScraper):
                 'div.product-number',
                 'span.sku'
             ])
-            
-            # Try meta tag for SKU
-            if not article_number:
-                sku_meta = soup.select_one('meta[itemprop="sku"]')
-                if sku_meta:
-                    article_number = sku_meta.get('content', '')
             
             # Extract category from breadcrumbs
             category = self._extract_text(soup, [
@@ -156,12 +190,6 @@ class MeinHausShopScraper(BaseScraper):
                 'span.product-detail-price',
                 'div.product-price'
             ])
-            
-            # Try meta tag
-            if not price_gross_raw:
-                price_meta = soup.select_one('meta[itemprop="price"]')
-                if price_meta:
-                    price_gross_raw = price_meta.get('content', '')
             
             price_gross = self._clean_price(price_gross_raw)
             
@@ -181,12 +209,6 @@ class MeinHausShopScraper(BaseScraper):
                 'span.product-detail-ean',
                 'meta[itemprop="gtin13"]'
             ])
-            
-            # Try meta tag
-            if not ean:
-                ean_meta = soup.select_one('meta[itemprop="gtin13"]')
-                if ean_meta:
-                    ean = ean_meta.get('content', '')
             
             # Extract image
             product_image = self._extract_image(soup, [
