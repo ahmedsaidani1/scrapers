@@ -311,34 +311,107 @@ class PumpenheizungScraper(BaseScraper):
         return product_urls
 
     def get_product_urls(self, max_urls: int = None) -> List[str]:
+        """
+        Get product URLs by:
+        1. Discovering category pages from homepage
+        2. Extracting product links from each category
+        
+        This site has a flat structure where categories are at root level (1 slash)
+        and products are linked from category pages.
+        """
         product_urls = []
         seen = set()
 
-        self.logger.info("Fetching product URLs from sitemap...")
-        sitemap_urls = self._extract_urls_from_sitemap(max_urls=max_urls)
-        self.logger.info(f"Sitemap yielded {len(sitemap_urls)} candidate product URLs")
-
-        for url in sitemap_urls:
-            if url not in seen:
-                seen.add(url)
-                product_urls.append(url)
-
-        # Fallback for sites where sitemap is missing/incomplete.
-        if not product_urls:
-            self.logger.info("Sitemap did not return product URLs. Falling back to page discovery...")
-            page_urls = self._extract_urls_from_pages(max_urls=max_urls)
-            for url in page_urls:
-                if url not in seen:
-                    seen.add(url)
-                    product_urls.append(url)
-
-        self.logger.info(f"Total product URLs found: {len(product_urls)}")
-        if not product_urls and not self.proxy:
-            self.logger.warning(
-                "No product URLs found and no proxy configured. "
-                "pumpen-heizung.de may block Render datacenter IPs. "
-                "Set PUMPENHEIZUNG_PROXY to a residential/rotating proxy."
-            )
+        try:
+            # Step 1: Get homepage and extract category links
+            self.logger.info("Fetching category URLs from homepage...")
+            response = self.make_request(self.base_url)
+            if not response:
+                self.logger.error("Failed to fetch homepage")
+                return product_urls
+            
+            homepage_soup = self.parse_html(response.text)
+            
+            # Find all internal links
+            all_links = []
+            for anchor in homepage_soup.select("a[href]"):
+                href = anchor.get("href", "").strip()
+                normalized = self._normalize_url(href)
+                if normalized:
+                    all_links.append(normalized)
+            
+            # Filter for category pages (1 slash, not in skip list)
+            category_urls = []
+            for url in set(all_links):
+                path = urlparse(url).path
+                
+                # Skip non-category pages
+                if any(skip in path.lower() for skip in self.SKIP_URL_PARTS):
+                    continue
+                
+                # Categories have exactly 1 slash (e.g., /DS-DVS, /Clip)
+                if path.count('/') == 1 and len(path) > 1:
+                    category_urls.append(url)
+            
+            self.logger.info(f"Found {len(category_urls)} category pages")
+            
+            # Step 2: Extract product links from each category
+            for i, category_url in enumerate(category_urls, 1):
+                self.logger.info(f"[{i}/{len(category_urls)}] Scraping category: {category_url}")
+                
+                try:
+                    cat_response = self.make_request(category_url)
+                    if not cat_response:
+                        continue
+                    
+                    cat_soup = self.parse_html(cat_response.text)
+                    
+                    # Find main content area
+                    main_content = cat_soup.select_one('main, #main, .main-content')
+                    if not main_content:
+                        main_content = cat_soup
+                    
+                    # Extract all links from main content
+                    page_products = 0
+                    for anchor in main_content.select("a[href]"):
+                        href = anchor.get("href", "").strip()
+                        normalized = self._normalize_url(href)
+                        
+                        if not normalized or normalized in seen:
+                            continue
+                        
+                        # Skip the category itself and other categories
+                        if normalized == category_url:
+                            continue
+                        
+                        path = urlparse(normalized).path
+                        
+                        # Skip non-product pages
+                        if any(skip in path.lower() for skip in self.SKIP_URL_PARTS):
+                            continue
+                        
+                        # Products are typically deeper than categories or have specific patterns
+                        # Accept URLs with 1+ slashes that aren't in the category list
+                        if path.count('/') >= 1 and normalized not in category_urls:
+                            seen.add(normalized)
+                            product_urls.append(normalized)
+                            page_products += 1
+                            
+                            if max_urls and len(product_urls) >= max_urls:
+                                self.logger.info(f"Reached max_urls limit of {max_urls}")
+                                return product_urls[:max_urls]
+                    
+                    self.logger.info(f"  Found {page_products} products")
+                    
+                except Exception as e:
+                    self.logger.error(f"Error processing category {category_url}: {e}")
+                    continue
+            
+            self.logger.info(f"\nTotal product URLs found: {len(product_urls)}")
+            
+        except Exception as e:
+            self.logger.error(f"Error getting product URLs: {e}", exc_info=True)
+        
         if max_urls:
             return product_urls[:max_urls]
         return product_urls
@@ -618,17 +691,19 @@ class PumpenheizungScraper(BaseScraper):
 
 def main():
     scraper = PumpenheizungScraper()
-    is_production = "--production" in sys.argv
-    max_products = None if is_production else 10
+    
+    # Production mode by default, use --test for limited run
+    is_test = "--test" in sys.argv
+    max_products = 10 if is_test else None
 
-    if is_production:
+    if is_test:
         print("=" * 80)
-        print("PRODUCTION MODE: Scraping all products")
+        print("TEST MODE: Scraping first 10 products")
         print("=" * 80)
     else:
         print("=" * 80)
-        print("TEST MODE: Scraping first 10 products")
-        print("Use --production for a full run")
+        print("PRODUCTION MODE: Scraping all products")
+        print("Use --test to scrape only 10 products")
         print("=" * 80)
 
     success_count = scraper.run(max_products=max_products, concurrent_workers=1)
