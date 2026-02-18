@@ -82,14 +82,17 @@ class MeinHausShopScraper(BaseScraper):
         seen_urls = set()
         
         try:
-            # Get main sitemap index
+            # Get main sitemap index with extended timeout
             self.logger.info("Fetching main sitemap index...")
             sitemap_url = "https://meinhausshop.de/sitemap.xml"
-            response = self.make_request(sitemap_url)
+            
+            # Try with extended timeout for slow servers
+            response = self.make_request(sitemap_url, timeout=120)
             
             if not response:
-                self.logger.error("Failed to fetch main sitemap - make_request returned None")
-                return product_urls
+                self.logger.warning("Failed to fetch main sitemap, trying direct sitemap URLs...")
+                # Fallback: Try direct sitemap URLs if main sitemap fails
+                return self._get_urls_from_direct_sitemaps()
             
             self.logger.info(f"Main sitemap fetched successfully, status code: {response.status_code}")
             
@@ -99,7 +102,8 @@ class MeinHausShopScraper(BaseScraper):
             if not sitemap_locs:
                 self.logger.error(f"No <loc> tags found in sitemap. Response length: {len(response.text)}")
                 self.logger.error(f"First 500 chars of response: {response.text[:500]}")
-                return product_urls
+                self.logger.warning("Trying direct sitemap URLs as fallback...")
+                return self._get_urls_from_direct_sitemaps()
             
             selected_parts = self._get_selected_sitemap_parts(len(sitemap_locs))
             if selected_parts:
@@ -121,8 +125,8 @@ class MeinHausShopScraper(BaseScraper):
                 self.logger.info(f"Processing sitemap {i}/{len(sitemap_locs)}: {sitemap_gz_url}")
                 
                 try:
-                    # Download and decompress
-                    gz_response = self.make_request(sitemap_gz_url)
+                    # Download and decompress with extended timeout
+                    gz_response = self.make_request(sitemap_gz_url, timeout=120)
                     if not gz_response:
                         self.logger.error(f"Failed to fetch sitemap {i}: {sitemap_gz_url}")
                         continue
@@ -167,6 +171,77 @@ class MeinHausShopScraper(BaseScraper):
         except Exception as e:
             self.logger.error(f"Error getting product URLs: {e}", exc_info=True)
         
+        return product_urls
+
+    def _get_urls_from_direct_sitemaps(self) -> List[str]:
+        """
+        Fallback method: Try to fetch sitemaps directly without the index.
+        This is used when the main sitemap.xml is unreachable.
+        """
+        self.logger.info("Using direct sitemap fallback method")
+        product_urls = []
+        seen_urls = set()
+        
+        # Known sitemap URLs based on the structure
+        direct_sitemaps = [
+            "https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-1.xml.gz",
+            "https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-2.xml.gz",
+            "https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-3.xml.gz",
+            "https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-4.xml.gz",
+        ]
+        
+        selected_parts = self._get_selected_sitemap_parts(len(direct_sitemaps))
+        
+        for i, sitemap_gz_url in enumerate(direct_sitemaps, 1):
+            if selected_parts and i not in selected_parts:
+                self.logger.debug(f"Skipping direct sitemap {i} (not in selected parts)")
+                continue
+            
+            self.logger.info(f"Trying direct sitemap {i}/{len(direct_sitemaps)}: {sitemap_gz_url}")
+            
+            try:
+                # Try with extended timeout
+                gz_response = self.make_request(sitemap_gz_url, timeout=120)
+                if not gz_response:
+                    self.logger.warning(f"Failed to fetch direct sitemap {i}")
+                    continue
+                
+                self.logger.info(f"Direct sitemap {i} fetched, size: {len(gz_response.content)} bytes")
+                
+                # Decompress
+                try:
+                    decompressed = gzip.decompress(gz_response.content).decode('utf-8')
+                    self.logger.info(f"Direct sitemap {i} decompressed, size: {len(decompressed)} bytes")
+                except Exception as decompress_error:
+                    self.logger.error(f"Failed to decompress direct sitemap {i}: {decompress_error}")
+                    continue
+                
+                # Extract URLs
+                urls = re.findall(r"<loc>([^<]+)</loc>", decompressed)
+                self.logger.info(f"Found {len(urls)} URLs in direct sitemap {i}")
+                
+                added = 0
+                for raw_url in urls:
+                    url = self._normalize_url(raw_url)
+                    if not url:
+                        continue
+                    if not self._is_product_url(url):
+                        continue
+                    if url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    product_urls.append(url)
+                    added += 1
+                
+                self.logger.info(f"Extracted {added} unique product URLs from direct sitemap {i}")
+                
+            except Exception as e:
+                self.logger.error(f"Error processing direct sitemap {sitemap_gz_url}: {e}")
+                import traceback
+                self.logger.error(traceback.format_exc())
+                continue
+        
+        self.logger.info(f"Total product URLs found via direct method: {len(product_urls)}")
         return product_urls
 
     def _get_selected_sitemap_parts(self, total_parts: int) -> Optional[set]:

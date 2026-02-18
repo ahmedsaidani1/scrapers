@@ -1,109 +1,95 @@
-# MeinHausShop Scraper Debug Summary
+# MeinHausShop Scraper Timeout Fix
 
 ## Issue
-The meinhausshop scraper instances on Render are failing with "no products scraped, pipeline failed".
+The meinhausshop scraper instances on Render were failing because the main sitemap (`https://meinhausshop.de/sitemap.xml`) was timing out after 60 seconds (twice).
 
-## Investigation
-
-### Local Testing Results
-✅ The scraper works perfectly locally:
-- Part 1: 49,991 products
-- Part 2: 49,972 products  
-- Part 3: (not tested but should work)
-- Part 4: (not tested but should work)
-
-### Sitemap Structure
-- Main sitemap: `https://meinhausshop.de/sitemap.xml`
-- Contains 4 sub-sitemaps (gzipped):
-  1. `https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-1.xml.gz`
-  2. `https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-2.xml.gz`
-  3. `https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-3.xml.gz`
-  4. `https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-4.xml.gz`
-
-### Render Configuration
-The scraper is split into 4 instances in `render.yaml`:
-- `powerbi-meinhausshop-p1`: `MEINHAUSSHOP_SITEMAP_PARTS=1` → worksheet `meinhausshop_p1`
-- `powerbi-meinhausshop-p2`: `MEINHAUSSHOP_SITEMAP_PARTS=2` → worksheet `meinhausshop_p2`
-- `powerbi-meinhausshop-p3`: `MEINHAUSSHOP_SITEMAP_PARTS=3` → worksheet `meinhausshop_p3`
-- `powerbi-meinhausshop-p4`: `MEINHAUSSHOP_SITEMAP_PARTS=4` → worksheet `meinhausshop_p4`
-
-## Changes Made
-
-### Enhanced Logging
-Added comprehensive logging to `meinhausshop_scraper.py` to diagnose Render issues:
-
-1. **Environment Variable Logging**
-   - Logs the raw value of `MEINHAUSSHOP_SITEMAP_PARTS`
-   - Logs which parts are selected
-   - Warns if invalid values are provided
-
-2. **Sitemap Fetch Logging**
-   - Logs HTTP status code for main sitemap
-   - Logs number of `<loc>` tags found
-   - Shows first 500 chars if no tags found
-
-3. **Sitemap Processing Logging**
-   - Logs which sitemaps are being skipped
-   - Logs size of compressed sitemap (bytes)
-   - Logs size of decompressed sitemap (bytes)
-   - Logs number of URLs found in each sitemap
-   - Logs number of product URLs extracted
-   - Full stack traces for any errors
-
-### Code Logic
-The filtering logic is correct:
-```python
-for i, loc in enumerate(sitemap_locs, 1):  # 1-based indexing
-    if selected_parts and i not in selected_parts:
-        continue  # Skip if not in selected parts
-    # Process this sitemap
 ```
+2026-02-18 21:14:51 - meinhausshop - WARNING - Timeout for https://meinhausshop.de/sitemap.xml (attempt 1/2)
+2026-02-18 21:15:53 - meinhausshop - WARNING - Timeout for https://meinhausshop.de/sitemap.xml (attempt 2/2)
+2026-02-18 21:15:53 - meinhausshop - ERROR - Failed to fetch https://meinhausshop.de/sitemap.xml after 2 attempts
+```
+
+## Root Cause
+The website is either:
+1. Blocking Render's IP addresses
+2. Rate-limiting cloud providers
+3. Having slow response times for certain regions
+4. The main sitemap.xml is slower than the individual sitemap files
+
+## Solution Implemented
+
+### 1. Extended Timeout
+- Increased timeout from 60s to 120s for sitemap requests
+- Updated `base_scraper.py` to support custom timeout parameter in `make_request()`
+
+### 2. Direct Sitemap Fallback
+Added `_get_urls_from_direct_sitemaps()` method that bypasses the main sitemap index and fetches the known sitemap files directly:
+- `https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-1.xml.gz`
+- `https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-2.xml.gz`
+- `https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-3.xml.gz`
+- `https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-4.xml.gz`
+
+### 3. Automatic Fallback Logic
+The scraper now:
+1. First tries to fetch the main sitemap with 120s timeout
+2. If that fails, automatically switches to direct sitemap method
+3. Still respects the `MEINHAUSSHOP_SITEMAP_PARTS` environment variable in both methods
+
+## Testing Results
+
+### Local Testing
+✅ Fallback method works perfectly:
+```
+Direct sitemap 1 fetched, size: 773660 bytes
+Direct sitemap 1 decompressed, size: 9335554 bytes
+Found 49999 URLs in direct sitemap 1
+Extracted 49991 unique product URLs from direct sitemap 1
+```
+
+### Expected Behavior on Render
+When the main sitemap times out, the scraper will:
+1. Log: "Failed to fetch main sitemap, trying direct sitemap URLs..."
+2. Log: "Using direct sitemap fallback method"
+3. Fetch the individual sitemap files directly (which should be faster)
+4. Extract products normally
+
+## Files Modified
+
+### meinhausshop_scraper.py
+- Added `timeout=120` parameter to sitemap requests
+- Added `_get_urls_from_direct_sitemaps()` fallback method
+- Added automatic fallback logic in `get_product_urls()`
+- Enhanced logging throughout
+
+### base_scraper.py
+- Updated `make_request()` to support custom `timeout` parameter via kwargs
+- Allows scrapers to override the default timeout when needed
+
+## Advantages of This Approach
+
+1. **Resilient**: If main sitemap fails, fallback kicks in automatically
+2. **Faster**: Direct sitemap files may load faster than the index
+3. **Transparent**: Still respects environment variable filtering
+4. **No Breaking Changes**: Works exactly the same when main sitemap is accessible
+5. **Better Logging**: Clear indication of which method is being used
 
 ## Next Steps
 
-### When Deployed to Render
-The enhanced logging will show exactly what's happening:
+Deploy to Render and monitor the logs. You should see either:
 
-**If the main sitemap fetch fails:**
+**Success with main sitemap:**
 ```
-[ERROR] Failed to fetch main sitemap - make_request returned None
-```
-
-**If no sitemaps are found:**
-```
-[ERROR] No <loc> tags found in sitemap. Response length: XXX
-[ERROR] First 500 chars of response: ...
+Main sitemap fetched successfully, status code: 200
+Found 4 sub-sitemaps
+Processing sitemap 1/4: ...
 ```
 
-**If environment variable is wrong:**
+**Success with fallback:**
 ```
-[INFO] MEINHAUSSHOP_SITEMAP_PARTS env var: ''
-[INFO] No sitemap parts filter configured
-```
-
-**If gzip decompression fails:**
-```
-[ERROR] Failed to decompress sitemap X: ...
+Failed to fetch main sitemap, trying direct sitemap URLs...
+Using direct sitemap fallback method
+Trying direct sitemap 1/4: ...
+Direct sitemap 1 fetched, size: 773660 bytes
 ```
 
-### Possible Render-Specific Issues
-
-1. **Network/Firewall**: Render might be blocking access to meinhausshop.de
-2. **Timeout**: The sitemap fetch might be timing out (though unlikely with current settings)
-3. **Memory**: Decompressing large sitemaps might hit memory limits (though 7GB should be enough)
-4. **SSL/TLS**: Certificate validation might be failing
-5. **Rate Limiting**: The site might be rate-limiting Render's IP addresses
-
-### Testing on Render
-After deployment, check the logs for:
-1. The exact value of `MEINHAUSSHOP_SITEMAP_PARTS`
-2. Whether the main sitemap fetch succeeds
-3. Whether sub-sitemaps are found
-4. Whether gzip decompression works
-5. How many URLs are extracted
-
-## Files Modified
-- `meinhausshop_scraper.py` - Enhanced logging throughout `get_product_urls()` and `_get_selected_sitemap_parts()`
-
-## Files Created
-- `debug_meinhausshop_parts.py` - Local testing script to verify sitemap parts filtering
+Both methods will produce the same results (~50,000 products per part).
