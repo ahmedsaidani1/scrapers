@@ -31,15 +31,16 @@ class StShop24Scraper(BaseScraper):
         
         self.logger.info(f"Initialized scraper for {self.base_url}")
     
-    def get_product_urls(self, max_categories: int = 50) -> List[str]:
+    def get_product_urls(self, max_urls: int = None) -> List[str]:
         """
-        Get list of product URLs by scraping category pages.
+        Get list of product URLs by scraping ALL category pages with pagination.
         Magento sites don't have products in sitemap, only categories.
         
         Args:
-            max_categories: Maximum number of categories to scrape (default: 50)
+            max_urls: Maximum number of product URLs to collect (None = unlimited)
         """
         product_urls = []
+        seen = set()
         
         try:
             # Get category URLs from sitemap
@@ -61,52 +62,97 @@ class StShop24Scraper(BaseScraper):
                 if url.endswith('.html') and 3 <= url.count('/') <= 5:
                     category_urls.append(url)
             
-            # Limit to first N categories
-            category_urls = category_urls[:max_categories]
+            self.logger.info(f"Found {len(category_urls)} categories to scrape")
             
-            self.logger.info(f"Scraping first {len(category_urls)} categories")
-            
-            # Scrape products from each category
+            # Scrape products from each category with pagination
             for i, category_url in enumerate(category_urls, 1):
-                self.logger.info(f"Scraping category {i}/{len(category_urls)}: {category_url}")
+                self.logger.info(f"[{i}/{len(category_urls)}] Scraping: {category_url}")
                 
-                try:
-                    cat_response = self.make_request(category_url)
-                    if not cat_response:
-                        continue
+                # Scrape all pages in this category
+                page = 1
+                while True:
+                    # Magento pagination format: ?p=1, ?p=2, etc.
+                    if page == 1:
+                        page_url = category_url
+                    else:
+                        separator = '&' if '?' in category_url else '?'
+                        page_url = f"{category_url}{separator}p={page}"
                     
-                    cat_soup = self.parse_html(cat_response.text)
+                    if page > 1:
+                        self.logger.info(f"  Page {page}: {page_url}")
                     
-                    # Find product items (Magento uses .product-item class)
-                    product_items = cat_soup.select('.product-item')
-                    
-                    for item in product_items:
-                        link = item.select_one('a')
-                        if link and link.get('href'):
-                            product_url = link.get('href')
-                            
-                            # Make absolute URL
-                            if product_url.startswith('/'):
-                                product_url = self.base_url + product_url
-                            elif not product_url.startswith('http'):
-                                product_url = self.base_url + '/' + product_url
-                            
-                            # Avoid duplicates
-                            if product_url not in product_urls:
-                                product_urls.append(product_url)
-                    
-                    self.logger.info(f"  Found {len(product_items)} products (total: {len(product_urls)})")
-                    
-                except Exception as e:
-                    self.logger.error(f"Error processing category {category_url}: {e}")
-                    continue
+                    try:
+                        cat_response = self.make_request(page_url)
+                        if not cat_response:
+                            break
+                        
+                        cat_soup = self.parse_html(cat_response.text)
+                        
+                        # Find product items (Magento uses .product-item class)
+                        product_items = cat_soup.select('.product-item')
+                        
+                        if not product_items:
+                            if page == 1:
+                                self.logger.info(f"  No products found")
+                            break
+                        
+                        page_products = 0
+                        for item in product_items:
+                            link = item.select_one('a')
+                            if link and link.get('href'):
+                                product_url = link.get('href')
+                                
+                                # Make absolute URL
+                                if product_url.startswith('/'):
+                                    product_url = self.base_url + product_url
+                                elif not product_url.startswith('http'):
+                                    product_url = self.base_url + '/' + product_url
+                                
+                                # Avoid duplicates
+                                if product_url not in seen:
+                                    seen.add(product_url)
+                                    product_urls.append(product_url)
+                                    page_products += 1
+                        
+                        if page == 1:
+                            self.logger.info(f"  Found {page_products} products")
+                        else:
+                            self.logger.info(f"  Page {page}: Found {page_products} products")
+                        
+                        # Check if we've reached the limit
+                        if max_urls and len(product_urls) >= max_urls:
+                            self.logger.info(f"Reached max_urls limit of {max_urls}")
+                            return product_urls[:max_urls]
+                        
+                        # Check if there's a next page
+                        next_button = cat_soup.select_one('.pages .action.next')
+                        if not next_button or page_products == 0:
+                            break
+                        
+                        page += 1
+                        
+                        # Small delay between pages
+                        import time
+                        time.sleep(0.5)
+                        
+                    except Exception as e:
+                        self.logger.error(f"Error processing page {page} of {category_url}: {e}")
+                        break
+                
+                # Small delay between categories
+                if i < len(category_urls):
+                    import time
+                    time.sleep(1)
+                
+                if max_urls and len(product_urls) >= max_urls:
+                    break
             
-            self.logger.info(f"Total product URLs found: {len(product_urls)}")
+            self.logger.info(f"\nTotal product URLs found: {len(product_urls)}")
             
         except Exception as e:
             self.logger.error(f"Error getting product URLs: {e}", exc_info=True)
         
-        return product_urls
+        return product_urls[:max_urls] if max_urls else product_urls
     
     def scrape_product(self, url: str) -> Optional[Dict[str, Any]]:
         """Scrape individual product page."""
