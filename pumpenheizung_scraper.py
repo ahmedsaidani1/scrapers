@@ -4,12 +4,15 @@ Website: https://pumpen-heizung.de
 Strategy: crawl sitemap first, then fall back to homepage/category link discovery.
 """
 import json
+import gzip
+import os
 import re
 import sys
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
+import cloudscraper
 
 from base_scraper import BaseScraper
 from config import SCRAPER_CONFIGS, SHEET_IDS
@@ -55,7 +58,102 @@ class PumpenheizungScraper(BaseScraper):
             "sitemap_url",
             f"{self.base_url}/sitemap.xml",
         )
+        self.proxy = os.getenv("PUMPENHEIZUNG_PROXY") or self.config.get("proxy")
+        self.request_headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        }
+        self.scraper = cloudscraper.create_scraper(
+            browser={"browser": "chrome", "platform": "windows", "mobile": False}
+        )
+        if self.proxy:
+            self.scraper.proxies = {"http": self.proxy, "https": self.proxy}
+            self.logger.info("Using proxy for pumpenheizung requests")
         self.logger.info(f"Initialized scraper for {self.base_url}")
+        self._warm_up_session()
+
+    def _warm_up_session(self) -> None:
+        warmup_urls = [self.base_url, f"{self.base_url}/robots.txt"]
+        for warmup_url in warmup_urls:
+            try:
+                response = self.scraper.get(
+                    warmup_url,
+                    headers=self.request_headers,
+                    timeout=20,
+                    allow_redirects=True,
+                )
+                self.logger.info(f"Warm-up {warmup_url}: HTTP {response.status_code}")
+                if response.status_code != 403:
+                    return
+            except Exception as exc:
+                self.logger.debug(f"Warm-up request failed for {warmup_url}: {exc}")
+
+    def make_request(self, url: str, method: str = "GET", **kwargs):
+        headers = dict(self.request_headers)
+        headers.update(kwargs.pop("headers", {}))
+        attempts = kwargs.pop("attempts", 3)
+        timeout = kwargs.pop("timeout", 30)
+
+        for attempt in range(1, attempts + 1):
+            try:
+                if method.upper() != "GET":
+                    response = self.scraper.request(
+                        method.upper(),
+                        url,
+                        headers=headers,
+                        timeout=timeout,
+                        allow_redirects=True,
+                        **kwargs,
+                    )
+                else:
+                    response = self.scraper.get(
+                        url,
+                        headers=headers,
+                        timeout=timeout,
+                        allow_redirects=True,
+                        **kwargs,
+                    )
+
+                if response.status_code == 403:
+                    self.logger.warning(f"403 for {url} (attempt {attempt}/{attempts})")
+                    self._warm_up_session()
+                    continue
+
+                response.raise_for_status()
+                return response
+            except Exception as exc:
+                if attempt == attempts:
+                    self.logger.error(f"Request failed for {url}: {exc}")
+                else:
+                    self.logger.warning(
+                        f"Retrying {url} after error (attempt {attempt}/{attempts}): {exc}"
+                    )
+
+        return None
+
+    def _decode_sitemap_content(self, url: str, response) -> str:
+        content = response.content or b""
+        if not content:
+            return response.text or ""
+
+        is_gzip = url.lower().endswith(".gz") or content[:2] == b"\x1f\x8b"
+        if is_gzip:
+            try:
+                return gzip.decompress(content).decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+
+        try:
+            return content.decode(response.encoding or "utf-8", errors="ignore")
+        except Exception:
+            return response.text or ""
 
     def _normalize_url(self, url: str) -> str:
         if not url:
@@ -126,11 +224,12 @@ class PumpenheizungScraper(BaseScraper):
                 continue
             visited_sitemaps.add(sitemap)
 
-            response = self.make_request(sitemap)
+            response = self.make_request(sitemap, attempts=2, timeout=30)
             if not response:
                 continue
 
-            soup = BeautifulSoup(response.text, "xml")
+            sitemap_text = self._decode_sitemap_content(sitemap, response)
+            soup = BeautifulSoup(sitemap_text, "xml")
             locs = [loc.get_text(strip=True) for loc in soup.find_all("loc")]
 
             for loc in locs:
@@ -234,6 +333,12 @@ class PumpenheizungScraper(BaseScraper):
                     product_urls.append(url)
 
         self.logger.info(f"Total product URLs found: {len(product_urls)}")
+        if not product_urls and not self.proxy:
+            self.logger.warning(
+                "No product URLs found and no proxy configured. "
+                "pumpen-heizung.de may block Render datacenter IPs. "
+                "Set PUMPENHEIZUNG_PROXY to a residential/rotating proxy."
+            )
         if max_urls:
             return product_urls[:max_urls]
         return product_urls

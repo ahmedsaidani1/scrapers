@@ -14,8 +14,26 @@ services:
         value: sanundo
       - key: PIPELINE_BATCH_SIZE
         value: "1"
+      - key: PIPELINE_MEMORY_LIMIT_MB
+        value: "1700"
       - key: SCRAPER_WORKERS
         value: "6"
+      - key: SCRAPER_HTTP_POOL_CONNECTIONS
+        value: "30"
+      - key: SCRAPER_HTTP_POOL_MAXSIZE
+        value: "30"
+      - key: SCRAPER_REQUEST_TIMEOUT
+        value: "20"
+      - key: SCRAPER_MAX_RETRIES
+        value: "2"
+      - key: SCRAPER_RETRY_DELAY
+        value: "1"
+      - key: SCRAPER_MIN_DELAY
+        value: "0.01"
+      - key: SCRAPER_MAX_DELAY
+        value: "0.08"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "300"
       - key: SHEETS_BATCH_SIZE
         value: "1200"
 
@@ -34,8 +52,26 @@ services:
         value: heima24
       - key: PIPELINE_BATCH_SIZE
         value: "1"
+      - key: PIPELINE_MEMORY_LIMIT_MB
+        value: "1700"
       - key: SCRAPER_WORKERS
         value: "6"
+      - key: SCRAPER_HTTP_POOL_CONNECTIONS
+        value: "30"
+      - key: SCRAPER_HTTP_POOL_MAXSIZE
+        value: "30"
+      - key: SCRAPER_REQUEST_TIMEOUT
+        value: "20"
+      - key: SCRAPER_MAX_RETRIES
+        value: "2"
+      - key: SCRAPER_RETRY_DELAY
+        value: "1"
+      - key: SCRAPER_MIN_DELAY
+        value: "0.01"
+      - key: SCRAPER_MAX_DELAY
+        value: "0.08"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "300"
       - key: SHEETS_BATCH_SIZE
         value: "1200"
 
@@ -54,8 +90,26 @@ services:
         value: st_shop24
       - key: PIPELINE_BATCH_SIZE
         value: "1"
+      - key: PIPELINE_MEMORY_LIMIT_MB
+        value: "1700"
       - key: SCRAPER_WORKERS
         value: "6"
+      - key: SCRAPER_HTTP_POOL_CONNECTIONS
+        value: "30"
+      - key: SCRAPER_HTTP_POOL_MAXSIZE
+        value: "30"
+      - key: SCRAPER_REQUEST_TIMEOUT
+        value: "20"
+      - key: SCRAPER_MAX_RETRIES
+        value: "2"
+      - key: SCRAPER_RETRY_DELAY
+        value: "1"
+      - key: SCRAPER_MIN_DELAY
+        value: "0.01"
+      - key: SCRAPER_MAX_DELAY
+        value: "0.08"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "300"
       - key: SHEETS_BATCH_SIZE
         value: "1200"
 
@@ -74,8 +128,26 @@ services:
         value: selfio
       - key: PIPELINE_BATCH_SIZE
         value: "1"
+      - key: PIPELINE_MEMORY_LIMIT_MB
+        value: "1700"
       - key: SCRAPER_WORKERS
         value: "6"
+      - key: SCRAPER_HTTP_POOL_CONNECTIONS
+        value: "30"
+      - key: SCRAPER_HTTP_POOL_MAXSIZE
+        value: "30"
+      - key: SCRAPER_REQUEST_TIMEOUT
+        value: "20"
+      - key: SCRAPER_MAX_RETRIES
+        value: "2"
+      - key: SCRAPER_RETRY_DELAY
+        value: "1"
+      - key: SCRAPER_MIN_DELAY
+        value: "0.01"
+      - key: SCRAPER_MAX_DELAY
+        value: "0.08"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "300"
       - key: SHEETS_BATCH_SIZE
         value: "1200"
 
@@ -94,13 +166,31 @@ services:
         value: heizungsdiscount24
       - key: PIPELINE_BATCH_SIZE
         value: "1"
+      - key: PIPELINE_MEMORY_LIMIT_MB
+        value: "1700"
       - key: SCRAPER_WORKERS
-        value: "5"
+        value: "6"
+      - key: SCRAPER_HTTP_POOL_CONNECTIONS
+        value: "30"
+      - key: SCRAPER_HTTP_POOL_MAXSIZE
+        value: "30"
+      - key: SCRAPER_REQUEST_TIMEOUT
+        value: "20"
+      - key: SCRAPER_MAX_RETRIES
+        value: "2"
+      - key: SCRAPER_RETRY_DELAY
+        value: "1"
+      - key: SCRAPER_MIN_DELAY
+        value: "0.01"
+      - key: SCRAPER_MAX_DELAY
+        value: "0.08"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "300"
       - key: SHEETS_BATCH_SIZE
-        value: "1200"
+        value: "5000"
 
   - type: cron
-    name: powerbi-meinhausshop
+    name: powerbi-meinhausshop-p1
     env: python
     schedule: "40 3 * * 0"
     buildCommand: pip install -r requirements.txt
@@ -110,35 +200,159 @@ services:
         sync: false
       - key: SCRAPER_FILTER
         value: meinhausshop
+      - key: MEINHAUSSHOP_SITEMAP_PARTS
+        value: "1"
       - key: POWERBI_WORKSHEET_NAME
-        value: meinhausshop
+        value: meinhausshop_p1
       - key: PIPELINE_BATCH_SIZE
         value: "1"
-      - key: SCRAPER_WORKERS
-        value: "18"
       - key: PIPELINE_MEMORY_LIMIT_MB
         value: "7000"
+      - key: SCRAPER_WORKERS
+        value: "14"
       - key: SCRAPER_HTTP_POOL_CONNECTIONS
         value: "80"
       - key: SCRAPER_HTTP_POOL_MAXSIZE
         value: "80"
-      - key: SCRAPER_CSV_BUFFER_SIZE
-        value: "500"
       - key: SCRAPER_REQUEST_TIMEOUT
-        value: "10"
+        value: "12"
       - key: SCRAPER_MAX_RETRIES
         value: "1"
+      - key: SCRAPER_RETRY_DELAY
+        value: "0.2"
       - key: SCRAPER_MIN_DELAY
         value: "0.00"
       - key: SCRAPER_MAX_DELAY
-        value: "0.02"
+        value: "0.01"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "1000"
+      - key: SHEETS_BATCH_SIZE
+        value: "5000"
+
+  - type: cron
+    name: powerbi-meinhausshop-p2
+    env: python
+    schedule: "45 3 * * 0"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_production_powerbi.py
+    envVars:
+      - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+        sync: false
+      - key: SCRAPER_FILTER
+        value: meinhausshop
+      - key: MEINHAUSSHOP_SITEMAP_PARTS
+        value: "2"
+      - key: POWERBI_WORKSHEET_NAME
+        value: meinhausshop_p2
+      - key: PIPELINE_BATCH_SIZE
+        value: "1"
+      - key: PIPELINE_MEMORY_LIMIT_MB
+        value: "7000"
+      - key: SCRAPER_WORKERS
+        value: "14"
+      - key: SCRAPER_HTTP_POOL_CONNECTIONS
+        value: "80"
+      - key: SCRAPER_HTTP_POOL_MAXSIZE
+        value: "80"
+      - key: SCRAPER_REQUEST_TIMEOUT
+        value: "12"
+      - key: SCRAPER_MAX_RETRIES
+        value: "1"
+      - key: SCRAPER_RETRY_DELAY
+        value: "0.2"
+      - key: SCRAPER_MIN_DELAY
+        value: "0.00"
+      - key: SCRAPER_MAX_DELAY
+        value: "0.01"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "1000"
+      - key: SHEETS_BATCH_SIZE
+        value: "5000"
+
+  - type: cron
+    name: powerbi-meinhausshop-p3
+    env: python
+    schedule: "50 3 * * 0"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_production_powerbi.py
+    envVars:
+      - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+        sync: false
+      - key: SCRAPER_FILTER
+        value: meinhausshop
+      - key: MEINHAUSSHOP_SITEMAP_PARTS
+        value: "3"
+      - key: POWERBI_WORKSHEET_NAME
+        value: meinhausshop_p3
+      - key: PIPELINE_BATCH_SIZE
+        value: "1"
+      - key: PIPELINE_MEMORY_LIMIT_MB
+        value: "7000"
+      - key: SCRAPER_WORKERS
+        value: "14"
+      - key: SCRAPER_HTTP_POOL_CONNECTIONS
+        value: "80"
+      - key: SCRAPER_HTTP_POOL_MAXSIZE
+        value: "80"
+      - key: SCRAPER_REQUEST_TIMEOUT
+        value: "12"
+      - key: SCRAPER_MAX_RETRIES
+        value: "1"
+      - key: SCRAPER_RETRY_DELAY
+        value: "0.2"
+      - key: SCRAPER_MIN_DELAY
+        value: "0.00"
+      - key: SCRAPER_MAX_DELAY
+        value: "0.01"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "1000"
+      - key: SHEETS_BATCH_SIZE
+        value: "5000"
+
+  - type: cron
+    name: powerbi-meinhausshop-p4
+    env: python
+    schedule: "55 3 * * 0"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_production_powerbi.py
+    envVars:
+      - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+        sync: false
+      - key: SCRAPER_FILTER
+        value: meinhausshop
+      - key: MEINHAUSSHOP_SITEMAP_PARTS
+        value: "4"
+      - key: POWERBI_WORKSHEET_NAME
+        value: meinhausshop_p4
+      - key: PIPELINE_BATCH_SIZE
+        value: "1"
+      - key: PIPELINE_MEMORY_LIMIT_MB
+        value: "7000"
+      - key: SCRAPER_WORKERS
+        value: "14"
+      - key: SCRAPER_HTTP_POOL_CONNECTIONS
+        value: "80"
+      - key: SCRAPER_HTTP_POOL_MAXSIZE
+        value: "80"
+      - key: SCRAPER_REQUEST_TIMEOUT
+        value: "12"
+      - key: SCRAPER_MAX_RETRIES
+        value: "1"
+      - key: SCRAPER_RETRY_DELAY
+        value: "0.2"
+      - key: SCRAPER_MIN_DELAY
+        value: "0.00"
+      - key: SCRAPER_MAX_DELAY
+        value: "0.01"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "1000"
       - key: SHEETS_BATCH_SIZE
         value: "5000"
 
   - type: cron
     name: powerbi-wolfonlineshop
     env: python
-    schedule: "0 4 * * 0"
+    schedule: "20 4 * * 0"
     buildCommand: pip install -r requirements.txt
     startCommand: python run_production_powerbi.py
     envVars:
@@ -150,15 +364,33 @@ services:
         value: wolfonlineshop
       - key: PIPELINE_BATCH_SIZE
         value: "1"
+      - key: PIPELINE_MEMORY_LIMIT_MB
+        value: "1700"
       - key: SCRAPER_WORKERS
         value: "5"
+      - key: SCRAPER_HTTP_POOL_CONNECTIONS
+        value: "30"
+      - key: SCRAPER_HTTP_POOL_MAXSIZE
+        value: "30"
+      - key: SCRAPER_REQUEST_TIMEOUT
+        value: "20"
+      - key: SCRAPER_MAX_RETRIES
+        value: "2"
+      - key: SCRAPER_RETRY_DELAY
+        value: "1"
+      - key: SCRAPER_MIN_DELAY
+        value: "0.01"
+      - key: SCRAPER_MAX_DELAY
+        value: "0.08"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "300"
       - key: SHEETS_BATCH_SIZE
         value: "1200"
 
   - type: cron
     name: powerbi-pumpe24
     env: python
-    schedule: "20 4 * * 0"
+    schedule: "40 4 * * 0"
     buildCommand: pip install -r requirements.txt
     startCommand: python run_production_powerbi.py
     envVars:
@@ -172,8 +404,26 @@ services:
         value: pumpe24
       - key: PIPELINE_BATCH_SIZE
         value: "1"
+      - key: PIPELINE_MEMORY_LIMIT_MB
+        value: "1700"
       - key: SCRAPER_WORKERS
         value: "5"
+      - key: SCRAPER_HTTP_POOL_CONNECTIONS
+        value: "30"
+      - key: SCRAPER_HTTP_POOL_MAXSIZE
+        value: "30"
+      - key: SCRAPER_REQUEST_TIMEOUT
+        value: "20"
+      - key: SCRAPER_MAX_RETRIES
+        value: "2"
+      - key: SCRAPER_RETRY_DELAY
+        value: "1"
+      - key: SCRAPER_MIN_DELAY
+        value: "0.01"
+      - key: SCRAPER_MAX_DELAY
+        value: "0.08"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "300"
       - key: SHEETS_BATCH_SIZE
         value: "1200"
 
@@ -186,25 +436,47 @@ services:
     envVars:
       - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
         sync: false
+      - key: PUMPENHEIZUNG_PROXY
+        sync: false
       - key: SCRAPER_FILTER
         value: pumpenheizung
       - key: POWERBI_WORKSHEET_NAME
         value: pumpenheizung
       - key: PIPELINE_BATCH_SIZE
         value: "1"
+      - key: PIPELINE_MEMORY_LIMIT_MB
+        value: "1700"
       - key: SCRAPER_WORKERS
+        value: "6"
+      - key: SCRAPER_HTTP_POOL_CONNECTIONS
+        value: "30"
+      - key: SCRAPER_HTTP_POOL_MAXSIZE
+        value: "30"
+      - key: SCRAPER_REQUEST_TIMEOUT
+        value: "20"
+      - key: SCRAPER_MAX_RETRIES
+        value: "2"
+      - key: SCRAPER_RETRY_DELAY
         value: "1"
+      - key: SCRAPER_MIN_DELAY
+        value: "0.01"
+      - key: SCRAPER_MAX_DELAY
+        value: "0.08"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "300"
       - key: SHEETS_BATCH_SIZE
-        value: "800"
+        value: "1200"
 
   - type: cron
     name: powerbi-wasserpumpe
     env: python
-    schedule: "0 7 * * 0"
+    schedule: "20 5 * * 0"
     buildCommand: pip install -r requirements.txt
     startCommand: python run_production_powerbi.py
     envVars:
       - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
+        sync: false
+      - key: WASSERPUMPE_PROXY
         sync: false
       - key: SCRAPER_FILTER
         value: wasserpumpe
@@ -212,7 +484,25 @@ services:
         value: wasserpumpe
       - key: PIPELINE_BATCH_SIZE
         value: "1"
+      - key: PIPELINE_MEMORY_LIMIT_MB
+        value: "1700"
       - key: SCRAPER_WORKERS
+        value: "6"
+      - key: SCRAPER_HTTP_POOL_CONNECTIONS
+        value: "30"
+      - key: SCRAPER_HTTP_POOL_MAXSIZE
+        value: "30"
+      - key: SCRAPER_REQUEST_TIMEOUT
+        value: "20"
+      - key: SCRAPER_MAX_RETRIES
+        value: "2"
+      - key: SCRAPER_RETRY_DELAY
         value: "1"
+      - key: SCRAPER_MIN_DELAY
+        value: "0.01"
+      - key: SCRAPER_MAX_DELAY
+        value: "0.08"
+      - key: SCRAPER_CSV_BUFFER_SIZE
+        value: "300"
       - key: SHEETS_BATCH_SIZE
-        value: "800"
+        value: "1200"
