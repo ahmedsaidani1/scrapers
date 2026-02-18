@@ -88,23 +88,35 @@ class MeinHausShopScraper(BaseScraper):
             response = self.make_request(sitemap_url)
             
             if not response:
-                self.logger.error("Failed to fetch main sitemap")
+                self.logger.error("Failed to fetch main sitemap - make_request returned None")
                 return product_urls
+            
+            self.logger.info(f"Main sitemap fetched successfully, status code: {response.status_code}")
             
             soup = BeautifulSoup(response.text, "xml")
             sitemap_locs = soup.find_all('loc')
+            
+            if not sitemap_locs:
+                self.logger.error(f"No <loc> tags found in sitemap. Response length: {len(response.text)}")
+                self.logger.error(f"First 500 chars of response: {response.text[:500]}")
+                return product_urls
+            
             selected_parts = self._get_selected_sitemap_parts(len(sitemap_locs))
             if selected_parts:
                 self.logger.info(
                     f"Sitemap part filter active: processing parts {sorted(selected_parts)} only"
                 )
+            else:
+                self.logger.info("No sitemap part filter - will process ALL parts")
              
             self.logger.info(f"Found {len(sitemap_locs)} sub-sitemaps")
              
             # Process each compressed sitemap
             for i, loc in enumerate(sitemap_locs, 1):
                 if selected_parts and i not in selected_parts:
+                    self.logger.debug(f"Skipping sitemap {i} (not in selected parts)")
                     continue
+                    
                 sitemap_gz_url = loc.text.strip()
                 self.logger.info(f"Processing sitemap {i}/{len(sitemap_locs)}: {sitemap_gz_url}")
                 
@@ -112,13 +124,23 @@ class MeinHausShopScraper(BaseScraper):
                     # Download and decompress
                     gz_response = self.make_request(sitemap_gz_url)
                     if not gz_response:
+                        self.logger.error(f"Failed to fetch sitemap {i}: {sitemap_gz_url}")
                         continue
                     
+                    self.logger.info(f"Sitemap {i} fetched, size: {len(gz_response.content)} bytes")
+                    
                     # Decompress gzip content
-                    decompressed = gzip.decompress(gz_response.content).decode('utf-8')
+                    try:
+                        decompressed = gzip.decompress(gz_response.content).decode('utf-8')
+                        self.logger.info(f"Sitemap {i} decompressed, size: {len(decompressed)} bytes")
+                    except Exception as decompress_error:
+                        self.logger.error(f"Failed to decompress sitemap {i}: {decompress_error}")
+                        continue
 
                     # Regex parsing is faster than full DOM build on very large sitemap files.
                     urls = re.findall(r"<loc>([^<]+)</loc>", decompressed)
+                    self.logger.info(f"Found {len(urls)} URLs in sitemap {i}")
+                    
                     added = 0
                     for raw_url in urls:
                         url = self._normalize_url(raw_url)
@@ -132,10 +154,12 @@ class MeinHausShopScraper(BaseScraper):
                         product_urls.append(url)
                         added += 1
 
-                    self.logger.info(f"Extracted {added} unique product URLs from this sitemap")
+                    self.logger.info(f"Extracted {added} unique product URLs from sitemap {i}")
                     
                 except Exception as e:
                     self.logger.error(f"Error processing sitemap {sitemap_gz_url}: {e}")
+                    import traceback
+                    self.logger.error(traceback.format_exc())
                     continue
             
             self.logger.info(f"Total product URLs found: {len(product_urls)}")
@@ -151,7 +175,10 @@ class MeinHausShopScraper(BaseScraper):
         Example: MEINHAUSSHOP_SITEMAP_PARTS="1,2" or "4"
         """
         raw = (os.getenv("MEINHAUSSHOP_SITEMAP_PARTS") or "").strip()
+        self.logger.info(f"MEINHAUSSHOP_SITEMAP_PARTS env var: '{raw}'")
+        
         if not raw:
+            self.logger.info("No sitemap parts filter configured")
             return None
 
         selected = set()
@@ -162,10 +189,19 @@ class MeinHausShopScraper(BaseScraper):
             try:
                 idx = int(token)
             except ValueError:
+                self.logger.warning(f"Invalid sitemap part value: '{token}' (not an integer)")
                 continue
             if 1 <= idx <= total_parts:
                 selected.add(idx)
-        return selected or None
+                self.logger.info(f"Added sitemap part {idx} to selection")
+            else:
+                self.logger.warning(f"Sitemap part {idx} out of range (1-{total_parts})")
+        
+        if not selected:
+            self.logger.warning("No valid sitemap parts selected, will process ALL")
+            return None
+            
+        return selected
     
     def scrape_product(self, url: str) -> Optional[Dict[str, Any]]:
         """
