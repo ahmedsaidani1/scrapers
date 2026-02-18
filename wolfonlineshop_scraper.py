@@ -28,67 +28,201 @@ class WolfonlineshopScraper(BaseScraper):
         self.config = SCRAPER_CONFIGS.get(SCRAPER_NAME, {})
         self.base_url = self.config.get("base_url", "https://www.heat-store.de")
         
-        # Known category URLs to scrape
-        self.category_urls = [
-            f"{self.base_url}/heizung/heizkoerper/badheizkoerper//",
-            f"{self.base_url}/heizung/heizkoerper/paneelheizkoerper//",
-            f"{self.base_url}/heizung/gas-heizung//",
-            f"{self.base_url}/heizung/oel-heizung/oelkessel//",
-            f"{self.base_url}/heizung/holz-heizung/holzvergaser/holzkessel//",
+        # All LEAF categories (most specific, no children)
+        # Removed parent categories to avoid duplicates
+        # This ensures we get all unique products without overlap
+        self.all_categories = [
+            # Elektro (leaf category)
             f"{self.base_url}/elektro//",
+            
+            # Heizung leaf categories (removed parent "heizung")
+            f"{self.base_url}/heizung/brennstoffzelle//",
+            f"{self.base_url}/heizung/ersatzteile//",
+            
+            # Fussbodenheizung leaf categories (removed parent "fussbodenheizung")
+            f"{self.base_url}/heizung/fussbodenheizung/duennschichtsystem//",
+            f"{self.base_url}/heizung/fussbodenheizung/elektro-fussbodenheizung//",
+            f"{self.base_url}/heizung/fussbodenheizung/noppensystem//",
+            f"{self.base_url}/heizung/fussbodenheizung/rohr-zubehoer//",
+            f"{self.base_url}/heizung/fussbodenheizung/tackersystem//",
+            f"{self.base_url}/heizung/fussbodenheizung/trockenbausystem//",
+            
+            # Gas-heizung leaf categories (removed parent "gas-heizung")
+            f"{self.base_url}/heizung/gas-heizung/gasbrenner//",
+            f"{self.base_url}/heizung/gas-heizung/gaskessel//",
+            f"{self.base_url}/heizung/gas-heizung/gastherme//",
+            
+            # Heizkoerper-zubehoer leaf categories (removed parent)
+            f"{self.base_url}/heizung/heizkoerper-zubehoer/bad-vertikalheizkoerper//",
+            f"{self.base_url}/heizung/heizkoerper-zubehoer/kompaktheizkoerper//",
+            f"{self.base_url}/heizung/heizkoerper-zubehoer/ventilheizkoerper//",
+            
+            # Heizkoerper leaf categories (removed parent "heizkoerper")
+            f"{self.base_url}/heizung/heizkoerper/austauschheizkoerper//",
+            f"{self.base_url}/heizung/heizkoerper/badheizkoerper//",
+            f"{self.base_url}/heizung/heizkoerper/designheizkoerper//",
+            f"{self.base_url}/heizung/heizkoerper/elektroheizkoerper//",
+            f"{self.base_url}/heizung/heizkoerper/kompaktheizkoerper//",
+            f"{self.base_url}/heizung/heizkoerper/niedertemperaturheizkoerper//",
+            f"{self.base_url}/heizung/heizkoerper/paneelheizkoerper//",
+            f"{self.base_url}/heizung/heizkoerper/roehrenradiatoren//",
+            f"{self.base_url}/heizung/heizkoerper/ventilheizkoerper//",
+            f"{self.base_url}/heizung/heizkoerper/vertikalheizkoerper//",
+            
+            f"{self.base_url}/heizung/heizstaebe//",
+            
+            # Holz-heizung leaf categories (removed parent "holz-heizung")
+            f"{self.base_url}/heizung/holz-heizung/hackschnitzel//",
+            f"{self.base_url}/heizung/holz-heizung/holzvergaser/holzkessel-zubehoer//",
+            f"{self.base_url}/heizung/holz-heizung/holzvergaser/holzkessel//",
+            f"{self.base_url}/heizung/holz-heizung/pelletheizung//",
+            
+            f"{self.base_url}/heizung/hybridsysteme//",
+            
+            # Installation leaf categories (removed parent "installation")
+            f"{self.base_url}/heizung/installation/abgassysteme-schornstein//",
+            f"{self.base_url}/heizung/installation/armaturen//",
+            f"{self.base_url}/heizung/installation/ausdehnungsgefaesse//",
+            f"{self.base_url}/heizung/installation/befestigungstechnik//",
+            f"{self.base_url}/heizung/installation/c-stahlrohr-fittinge//",
+            f"{self.base_url}/heizung/installation/edelstahlrohr-fittinge//",
+            f"{self.base_url}/heizung/installation/fuehler-sensoren-regler//",
+            f"{self.base_url}/heizung/installation/isolierung//",
+            f"{self.base_url}/heizung/installation/kondensatpumpen//",
+            f"{self.base_url}/heizung/installation/kupferrohr-fittinge//",
+            f"{self.base_url}/heizung/installation/verbundrohr//",
+            f"{self.base_url}/heizung/installation/werkzeug//",
+            
+            # Oel-heizung leaf categories (removed parent "oel-heizung")
+            f"{self.base_url}/heizung/oel-heizung/oelbrenner//",
+            f"{self.base_url}/heizung/oel-heizung/oelkessel//",
+            f"{self.base_url}/heizung/oel-heizung/oeltanks-zubehoer//",
+            
+            f"{self.base_url}/heizung/pumpen//",
+            
+            # Waermepumpen leaf categories (removed parent "waermepumpen")
+            f"{self.base_url}/heizung/waermepumpen/wp-brauchwasser//",
+            f"{self.base_url}/heizung/waermepumpen/wp-erdwaerme-sole//",
+            f"{self.base_url}/heizung/waermepumpen/wp-luft-wasser//",
+            f"{self.base_url}/heizung/waermepumpen/wp-split//",
+            f"{self.base_url}/heizung/waermepumpen/wp-zubehoer//",
+            
+            f"{self.base_url}/heizung/wandheizung//",
+            
+            # Warmwasserspeicher leaf categories (removed parent)
+            f"{self.base_url}/heizung/warmwasserspeicher/speicher-zubehoer//",
+            f"{self.base_url}/heizung/warmwasserspeicher/speicher//",
+            
+            # Kamin (leaf category)
             f"{self.base_url}/kamin//",
         ]
         
         self.logger.info(f"Initialized scraper for {self.base_url}")
     
-    def get_product_urls(self) -> List[str]:
+    def get_product_urls(self, max_urls: int = None) -> List[str]:
         """
-        Get list of product URLs by scraping category pages.
-        Heat-Store doesn't have product URLs in sitemap, so we scrape categories.
+        Get list of product URLs by scraping all known categories with pagination.
         """
         product_urls = []
+        seen = set()
         
         try:
-            self.logger.info(f"Scraping {len(self.category_urls)} category pages...")
+            self.logger.info(f"Scraping {len(self.all_categories)} categories...")
             
-            for i, category_url in enumerate(self.category_urls, 1):
-                self.logger.info(f"Processing category {i}/{len(self.category_urls)}: {category_url}")
+            # Scrape products from each category with pagination
+            for i, category_url in enumerate(self.all_categories, 1):
+                self.logger.info(f"[{i}/{len(self.all_categories)}] Scraping: {category_url}")
                 
-                try:
-                    response = self.make_request(category_url)
+                # Scrape all pages in this category
+                page = 1
+                category_has_products = False
+                
+                while True:
+                    # Shopware pagination format: ?p=1, ?p=2, etc.
+                    if page == 1:
+                        page_url = category_url
+                    else:
+                        separator = '&' if '?' in category_url else '?'
+                        page_url = f"{category_url}{separator}p={page}"
+                    
+                    if page > 1:
+                        self.logger.info(f"  Page {page}: {page_url}")
+                    
+                    response = self.make_request(page_url)
                     if not response:
-                        continue
+                        self.logger.warning(f"  Failed to fetch page {page}")
+                        break
                     
                     soup = self.parse_html(response.text)
                     
-                    # Find product links (they have 'product' in class name)
-                    product_links = soup.find_all('a', class_=lambda x: x and 'product' in str(x).lower())
+                    # Find product links (Shopware 6 uses a.product-name for products)
+                    product_links = soup.select('a.product-name')
                     
+                    # Debug: if no products found, check HTML
+                    if not product_links and page == 1:
+                        # Check if page has product boxes
+                        product_boxes = soup.select('div.product-box')
+                        if product_boxes:
+                            self.logger.warning(f"  Found {len(product_boxes)} product-box divs but no product-name links!")
+                            # Save HTML for debugging
+                            debug_file = f"debug_no_products_{i}.html"
+                            with open(debug_file, 'w', encoding='utf-8') as f:
+                                f.write(response.text)
+                            self.logger.warning(f"  Saved HTML to {debug_file}")
+                    
+                    # Extract product URLs
+                    page_products = 0
                     for link in product_links:
-                        href = link.get('href')
-                        if href and href.endswith('.html'):
+                        href = link.get('href', '')
+                        if href:
                             # Make absolute URL
                             if href.startswith('/'):
                                 href = self.base_url + href
                             elif not href.startswith('http'):
                                 href = self.base_url + '/' + href
                             
-                            # Avoid duplicates
-                            if href not in product_urls:
+                            if href not in seen:
+                                seen.add(href)
                                 product_urls.append(href)
+                                page_products += 1
+                                category_has_products = True
                     
-                    self.logger.info(f"Found {len(product_links)} products in this category")
+                    if page == 1:
+                        self.logger.info(f"  Found {page_products} products")
+                    else:
+                        self.logger.info(f"  Page {page}: Found {page_products} products")
                     
-                except Exception as e:
-                    self.logger.error(f"Error processing category {category_url}: {e}")
-                    continue
+                    # Check if we've reached the limit
+                    if max_urls and len(product_urls) >= max_urls:
+                        self.logger.info(f"Reached max_urls limit of {max_urls}")
+                        return product_urls[:max_urls]
+                    
+                    # Check if there's a next page
+                    # Shopware 6 uses li.page-item.page-next (not disabled means there's a next page)
+                    next_button = soup.select_one('li.page-item.page-next:not(.disabled)')
+                    if not next_button or page_products == 0:
+                        break
+                    
+                    page += 1
+                    
+                    # Small delay between pages
+                    import time
+                    time.sleep(0.5)
+                
+                # Small delay between categories to avoid rate limiting
+                if i < len(self.all_categories):
+                    import time
+                    time.sleep(1)
+                
+                if max_urls and len(product_urls) >= max_urls:
+                    break
             
-            self.logger.info(f"Total product URLs found: {len(product_urls)}")
+            self.logger.info(f"\nTotal product URLs found: {len(product_urls)}")
             
         except Exception as e:
             self.logger.error(f"Error getting product URLs: {e}", exc_info=True)
         
-        return product_urls
+        return product_urls[:max_urls] if max_urls else product_urls
     
     def scrape_product(self, url: str) -> Optional[Dict[str, Any]]:
         """

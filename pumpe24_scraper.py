@@ -216,48 +216,127 @@ class Pumpe24Scraper(BaseScraper):
 
         return product_urls
     
+    def _get_subcategories(self, category_url: str) -> List[str]:
+        """Get subcategory URLs from a main category page."""
+        subcategories = []
+        
+        response = self.make_request(category_url)
+        if not response:
+            return []
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Find all product-item-link elements
+        links = soup.select('a.product-item-link')
+        
+        for link in links:
+            href = link.get('href', '')
+            # Subcategories typically have shorter paths and end with category names
+            # e.g., /pumpen/gartenpumpen.html (subcategory) vs /pumpe-espa-aspri-15-5m-gg.html (product)
+            if href and href.endswith('.html'):
+                # Count path segments - subcategories have fewer
+                path_segments = href.replace('https://www.pumpe24.de/', '').count('/')
+                # Subcategories typically have 1 slash (e.g., pumpen/gartenpumpen.html)
+                # Products have 0 slashes or very long names with many hyphens
+                if path_segments >= 1 and href not in subcategories:
+                    subcategories.append(href)
+        
+        return subcategories
+
     def get_product_urls(self, max_urls: int = None) -> List[str]:
         """
         Get product URLs by scraping category pages and finding actual products.
+        Handles two-level structure: main categories -> subcategories -> products.
+        Handles pagination to get all products from each subcategory.
         """
         product_urls = []
         seen = set()
         
         try:
-            self.logger.info(f"Scraping {len(self.category_urls)} category pages...")
+            self.logger.info(f"Scraping {len(self.category_urls)} main category pages...")
             
+            # First, collect all subcategories from main categories
+            all_subcategories = []
             for i, category_url in enumerate(self.category_urls, 1):
-                self.logger.info(f"[{i}/{len(self.category_urls)}] Scraping category: {category_url}")
+                self.logger.info(f"[{i}/{len(self.category_urls)}] Finding subcategories in: {category_url}")
+                subcats = self._get_subcategories(category_url)
+                all_subcategories.extend(subcats)
+                self.logger.info(f"  Found {len(subcats)} subcategories")
+                time.sleep(1)
+            
+            self.logger.info(f"\nTotal subcategories found: {len(all_subcategories)}")
+            self.logger.info(f"Now scraping products from subcategories...\n")
+            
+            # Now scrape products from each subcategory with pagination
+            for i, subcategory_url in enumerate(all_subcategories, 1):
+                self.logger.info(f"[{i}/{len(all_subcategories)}] Scraping subcategory: {subcategory_url}")
                 
-                response = self.make_request(category_url)
-                if not response:
-                    continue
+                # Scrape all pages in this subcategory
+                page = 1
+                while True:
+                    # Magento pagination format: ?p=1, ?p=2, etc.
+                    if page == 1:
+                        page_url = subcategory_url
+                    else:
+                        separator = '&' if '?' in subcategory_url else '?'
+                        page_url = f"{subcategory_url}{separator}p={page}"
+                    
+                    if page > 1:
+                        self.logger.info(f"  Scraping page {page}: {page_url}")
+                    
+                    response = self.make_request(page_url)
+                    if not response:
+                        break
+                    
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    # Find product links (Magento structure)
+                    product_links = soup.select('a.product-item-link')
+                    
+                    if not product_links:
+                        self.logger.info(f"  No products found on page {page}")
+                        break
+                    
+                    page_products = 0
+                    for link in product_links:
+                        href = link.get('href', '')
+                        if self._is_product_url(href) and href not in seen:
+                            seen.add(href)
+                            product_urls.append(href)
+                            page_products += 1
+                    
+                    if page == 1:
+                        self.logger.info(f"  Found {page_products} products on first page")
+                    else:
+                        self.logger.info(f"  Page {page}: Found {page_products} new products")
+                    
+                    # Check if we've reached the limit
+                    if max_urls and len(product_urls) >= max_urls:
+                        self.logger.info(f"Reached max_urls limit of {max_urls}")
+                        return product_urls[:max_urls]
+                    
+                    # Check if there's a next page
+                    next_page = soup.select_one('a.action.next')
+                    if not next_page or page_products == 0:
+                        break
+                    
+                    page += 1
+                    time.sleep(1)
                 
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # Find product links (Magento structure)
-                # Look for actual product item links (not subcategories)
-                product_links = soup.select('a.product-item-link')
-                
-                for link in product_links:
-                    href = link.get('href', '')
-                    if self._is_product_url(href) and href not in seen:
-                        seen.add(href)
-                        product_urls.append(href)
-                
-                self.logger.info(f"  Found {len(product_links)} links, {len(product_urls)} total products")
+                self.logger.info(f"  Subcategory complete. Total products so far: {len(product_urls)}")
                 
                 if max_urls and len(product_urls) >= max_urls:
                     break
                 
-                time.sleep(2)
+                time.sleep(1)
             
             if not product_urls:
+                self.logger.info("No products found via categories, trying sitemap fallback...")
                 product_urls = self._get_product_urls_from_sitemap(max_urls=max_urls)
                 if product_urls:
                     self.logger.info(f"Sitemap fallback found {len(product_urls)} products")
 
-            self.logger.info(f"Total product URLs found: {len(product_urls)}")
+            self.logger.info(f"\nTotal product URLs found: {len(product_urls)}")
 
             if not product_urls and not self.proxy:
                 self.logger.warning(
