@@ -198,10 +198,16 @@ services:
     envVars:
       - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
         sync: false
+      - key: MEINHAUSSHOP_PROXY
+        sync: false
       - key: SCRAPER_FILTER
         value: meinhausshop
       - key: MEINHAUSSHOP_SITEMAP_PARTS
         value: "1"
+      - key: MEINHAUSSHOP_SITEMAP_TIMEOUT
+        value: "45"
+      - key: MEINHAUSSHOP_SITEMAP_RETRIES
+        value: "3"
       - key: POWERBI_WORKSHEET_NAME
         value: meinhausshop_p1
       - key: PIPELINE_BATCH_SIZE
@@ -238,10 +244,16 @@ services:
     envVars:
       - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
         sync: false
+      - key: MEINHAUSSHOP_PROXY
+        sync: false
       - key: SCRAPER_FILTER
         value: meinhausshop
       - key: MEINHAUSSHOP_SITEMAP_PARTS
         value: "2"
+      - key: MEINHAUSSHOP_SITEMAP_TIMEOUT
+        value: "45"
+      - key: MEINHAUSSHOP_SITEMAP_RETRIES
+        value: "3"
       - key: POWERBI_WORKSHEET_NAME
         value: meinhausshop_p2
       - key: PIPELINE_BATCH_SIZE
@@ -278,9 +290,15 @@ services:
     envVars:
       - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
         sync: false
+      - key: MEINHAUSSHOP_PROXY
+        sync: false
       - key: SCRAPER_FILTER
         value: meinhausshop
       - key: MEINHAUSSHOP_SITEMAP_PARTS
+        value: "3"
+      - key: MEINHAUSSHOP_SITEMAP_TIMEOUT
+        value: "45"
+      - key: MEINHAUSSHOP_SITEMAP_RETRIES
         value: "3"
       - key: POWERBI_WORKSHEET_NAME
         value: meinhausshop_p3
@@ -318,10 +336,16 @@ services:
     envVars:
       - key: GOOGLE_APPLICATION_CREDENTIALS_JSON
         sync: false
+      - key: MEINHAUSSHOP_PROXY
+        sync: false
       - key: SCRAPER_FILTER
         value: meinhausshop
       - key: MEINHAUSSHOP_SITEMAP_PARTS
         value: "4"
+      - key: MEINHAUSSHOP_SITEMAP_TIMEOUT
+        value: "45"
+      - key: MEINHAUSSHOP_SITEMAP_RETRIES
+        value: "3"
       - key: POWERBI_WORKSHEET_NAME
         value: meinhausshop_p4
       - key: PIPELINE_BATCH_SIZE

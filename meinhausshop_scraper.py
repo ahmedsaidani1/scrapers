@@ -7,6 +7,7 @@ import sys
 import os
 import re
 import gzip
+import time
 from typing import List, Dict, Optional, Any
 from bs4 import BeautifulSoup
 from base_scraper import BaseScraper
@@ -30,8 +31,66 @@ class MeinHausShopScraper(BaseScraper):
         # Get website-specific config
         self.config = SCRAPER_CONFIGS.get(SCRAPER_NAME, {})
         self.base_url = self.config.get("base_url", "https://www.meinhausshop.de")
+        self.proxy = (os.getenv("MEINHAUSSHOP_PROXY") or self.config.get("proxy") or "").strip()
+        self.sitemap_timeout = self._get_float_env("MEINHAUSSHOP_SITEMAP_TIMEOUT", 45.0, minimum=5.0)
+        self.sitemap_retries = self._get_int_env("MEINHAUSSHOP_SITEMAP_RETRIES", 3, minimum=1)
+        self.direct_sitemaps = [
+            "https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-1.xml.gz",
+            "https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-2.xml.gz",
+            "https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-3.xml.gz",
+            "https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-4.xml.gz",
+        ]
         
+        if self.proxy:
+            self.session.proxies.update({
+                "http": self.proxy,
+                "https": self.proxy,
+            })
+            self.logger.info("Using proxy for meinhausshop requests")
+         
         self.logger.info(f"Initialized scraper for {self.base_url}")
+        self.logger.info(
+            f"Sitemap request config: timeout={self.sitemap_timeout}s retries={self.sitemap_retries}"
+        )
+
+    def _get_int_env(self, name: str, default: int, minimum: int = 1) -> int:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        try:
+            return max(int(raw), minimum)
+        except ValueError:
+            self.logger.warning(f"Invalid integer env var {name}='{raw}', using default {default}")
+            return default
+
+    def _get_float_env(self, name: str, default: float, minimum: float = 0.1) -> float:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        try:
+            return max(float(raw), minimum)
+        except ValueError:
+            self.logger.warning(f"Invalid float env var {name}='{raw}', using default {default}")
+            return default
+
+    def _request_sitemap(self, url: str, label: str) -> Optional[Any]:
+        """
+        Fetch sitemap resources with dedicated retries/timeouts independent from
+        general product-page request tuning.
+        """
+        for attempt in range(1, self.sitemap_retries + 1):
+            response = self.make_request(url, timeout=self.sitemap_timeout)
+            if response:
+                return response
+            if attempt < self.sitemap_retries:
+                backoff_seconds = min(2.0 * attempt, 6.0)
+                self.logger.warning(
+                    f"{label} fetch failed (attempt {attempt}/{self.sitemap_retries}), "
+                    f"retrying in {backoff_seconds:.1f}s"
+                )
+                time.sleep(backoff_seconds)
+        self.logger.error(f"Failed to fetch {label} after {self.sitemap_retries} attempts")
+        return None
 
     def _normalize_url(self, raw_url: str) -> str:
         if not raw_url:
@@ -80,19 +139,32 @@ class MeinHausShopScraper(BaseScraper):
         """
         product_urls = []
         seen_urls = set()
+        selected_parts = self._get_selected_sitemap_parts(len(self.direct_sitemaps))
+        
+        # Split cron runs should go directly to selected sitemap parts to avoid
+        # waiting on the sitemap index endpoint first.
+        if selected_parts:
+            self.logger.info(
+                f"Part-specific run detected ({sorted(selected_parts)}), "
+                "using direct sitemap mode first"
+            )
+            direct_urls = self._get_urls_from_direct_sitemaps(selected_parts=selected_parts)
+            if direct_urls:
+                return direct_urls
+            self.logger.warning(
+                "Direct sitemap mode returned no URLs, trying sitemap index as fallback"
+            )
         
         try:
             # Get main sitemap index with extended timeout
             self.logger.info("Fetching main sitemap index...")
-            sitemap_url = "https://meinhausshop.de/sitemap.xml"
-            
-            # Try with extended timeout for slow servers
-            response = self.make_request(sitemap_url, timeout=120)
+            sitemap_url = "https://www.meinhausshop.de/sitemap.xml"
+            response = self._request_sitemap(sitemap_url, "main sitemap index")
             
             if not response:
                 self.logger.warning("Failed to fetch main sitemap, trying direct sitemap URLs...")
                 # Fallback: Try direct sitemap URLs if main sitemap fails
-                return self._get_urls_from_direct_sitemaps()
+                return self._get_urls_from_direct_sitemaps(selected_parts=selected_parts)
             
             self.logger.info(f"Main sitemap fetched successfully, status code: {response.status_code}")
             
@@ -103,12 +175,14 @@ class MeinHausShopScraper(BaseScraper):
                 self.logger.error(f"No <loc> tags found in sitemap. Response length: {len(response.text)}")
                 self.logger.error(f"First 500 chars of response: {response.text[:500]}")
                 self.logger.warning("Trying direct sitemap URLs as fallback...")
-                return self._get_urls_from_direct_sitemaps()
+                return self._get_urls_from_direct_sitemaps(selected_parts=selected_parts)
             
-            selected_parts = self._get_selected_sitemap_parts(len(sitemap_locs))
-            if selected_parts:
+            index_selected_parts = selected_parts
+            if index_selected_parts is None:
+                index_selected_parts = self._get_selected_sitemap_parts(len(sitemap_locs))
+            if index_selected_parts:
                 self.logger.info(
-                    f"Sitemap part filter active: processing parts {sorted(selected_parts)} only"
+                    f"Sitemap part filter active: processing parts {sorted(index_selected_parts)} only"
                 )
             else:
                 self.logger.info("No sitemap part filter - will process ALL parts")
@@ -117,7 +191,7 @@ class MeinHausShopScraper(BaseScraper):
              
             # Process each compressed sitemap
             for i, loc in enumerate(sitemap_locs, 1):
-                if selected_parts and i not in selected_parts:
+                if index_selected_parts and i not in index_selected_parts:
                     self.logger.debug(f"Skipping sitemap {i} (not in selected parts)")
                     continue
                     
@@ -125,8 +199,8 @@ class MeinHausShopScraper(BaseScraper):
                 self.logger.info(f"Processing sitemap {i}/{len(sitemap_locs)}: {sitemap_gz_url}")
                 
                 try:
-                    # Download and decompress with extended timeout
-                    gz_response = self.make_request(sitemap_gz_url, timeout=120)
+                    # Download and decompress with dedicated sitemap settings
+                    gz_response = self._request_sitemap(sitemap_gz_url, f"sitemap {i}")
                     if not gz_response:
                         self.logger.error(f"Failed to fetch sitemap {i}: {sitemap_gz_url}")
                         continue
@@ -173,7 +247,7 @@ class MeinHausShopScraper(BaseScraper):
         
         return product_urls
 
-    def _get_urls_from_direct_sitemaps(self) -> List[str]:
+    def _get_urls_from_direct_sitemaps(self, selected_parts: Optional[set] = None) -> List[str]:
         """
         Fallback method: Try to fetch sitemaps directly without the index.
         This is used when the main sitemap.xml is unreachable.
@@ -181,27 +255,20 @@ class MeinHausShopScraper(BaseScraper):
         self.logger.info("Using direct sitemap fallback method")
         product_urls = []
         seen_urls = set()
-        
-        # Known sitemap URLs based on the structure
-        direct_sitemaps = [
-            "https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-1.xml.gz",
-            "https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-2.xml.gz",
-            "https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-3.xml.gz",
-            "https://www.meinhausshop.de/web/sitemap/shop-1/sitemap-4.xml.gz",
-        ]
-        
-        selected_parts = self._get_selected_sitemap_parts(len(direct_sitemaps))
-        
-        for i, sitemap_gz_url in enumerate(direct_sitemaps, 1):
+
+        if selected_parts is None:
+            selected_parts = self._get_selected_sitemap_parts(len(self.direct_sitemaps))
+
+        for i, sitemap_gz_url in enumerate(self.direct_sitemaps, 1):
             if selected_parts and i not in selected_parts:
                 self.logger.debug(f"Skipping direct sitemap {i} (not in selected parts)")
                 continue
             
-            self.logger.info(f"Trying direct sitemap {i}/{len(direct_sitemaps)}: {sitemap_gz_url}")
+            self.logger.info(f"Trying direct sitemap {i}/{len(self.direct_sitemaps)}: {sitemap_gz_url}")
             
             try:
-                # Try with extended timeout
-                gz_response = self.make_request(sitemap_gz_url, timeout=120)
+                # Use dedicated sitemap settings
+                gz_response = self._request_sitemap(sitemap_gz_url, f"direct sitemap {i}")
                 if not gz_response:
                     self.logger.warning(f"Failed to fetch direct sitemap {i}")
                     continue
