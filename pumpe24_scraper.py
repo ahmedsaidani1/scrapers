@@ -371,13 +371,28 @@ class Pumpe24Scraper(BaseScraper):
                 self.logger.warning(f"No product name found for {url}")
                 return None
             
-            # Extract manufacturer/brand
-            manufacturer = self._extract_text(soup, [
-                'a.product-manufacturer',
-                'span[itemprop="brand"]',
-                'div.product-brand',
-                'meta[itemprop="brand"]'
-            ])
+            # Extract manufacturer from product name first (it's usually the first word/brand)
+            # Pumpe24 products typically have format: "Pumpe [Brand] [Model]"
+            manufacturer = ""
+            if product_name:
+                words = product_name.split()
+                # If name starts with "Pumpe", the brand is usually the second word
+                if len(words) >= 2 and words[0].lower() == "pumpe":
+                    manufacturer = words[1]
+                # Otherwise, try first word
+                elif len(words) >= 1:
+                    first_word = words[0]
+                    if first_word and (first_word[0].isupper() or first_word.isupper()):
+                        manufacturer = first_word
+            
+            # Fallback: Try HTML elements if not found in name
+            if not manufacturer:
+                manufacturer = self._extract_text(soup, [
+                    'a.product-manufacturer',
+                    'span[itemprop="brand"]',
+                    'div.product-brand',
+                    'meta[itemprop="brand"]'
+                ])
             
             # Extract category from breadcrumbs
             category = self._extract_text(soup, [
@@ -387,12 +402,29 @@ class Pumpe24Scraper(BaseScraper):
             ])
             
             # Extract article number/SKU
+            # Try standard selectors first
             article_number = self._extract_text(soup, [
                 'div.product-info-stock-sku div.value',
                 'span[itemprop="sku"]',
                 'div.product-sku',
                 'meta[itemprop="sku"]'
             ])
+            
+            # Pumpe24 specific: Look for "Artikelnummer Hersteller" in product details
+            if not article_number:
+                artikel_elem = soup.find(string=lambda t: t and 'Artikelnummer Hersteller' in t)
+                if artikel_elem:
+                    parent = artikel_elem.parent
+                    if parent:
+                        grandparent = parent.parent
+                        if grandparent:
+                            text = grandparent.get_text(strip=True)
+                            # Extract number after "Artikelnummer Hersteller"
+                            # Stop at: +, lowercase letter, &nbsp, capital letter followed by lowercase (like "Besonderheit")
+                            import re
+                            match = re.search(r'Artikelnummer\s+Hersteller\s*([A-Z0-9\-]+?)(?:\+|[a-z]|&nbsp|[A-Z][a-z]|$)', text)
+                            if match:
+                                article_number = match.group(1)
             
             # Extract price (gross - with VAT)
             price_gross_raw = self._extract_text(soup, [

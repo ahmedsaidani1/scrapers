@@ -188,6 +188,24 @@ class SanundoScraper(BaseScraper):
                 if ean_meta:
                     ean = ean_meta.get('content', '')
             
+            # Sanundo specific: Look for "EAN:" in product details
+            if not ean:
+                ean_elem = soup.find(string=lambda t: t and 'EAN:' in t)
+                if ean_elem:
+                    # Navigate up to find the container with the full EAN
+                    parent = ean_elem.parent
+                    if parent:
+                        grandparent = parent.parent
+                        if grandparent:
+                            container = grandparent.parent
+                            if container:
+                                text = container.get_text(strip=True)
+                                # Extract EAN number after "EAN:"
+                                import re
+                                match = re.search(r'EAN:\s*(\d+)', text)
+                                if match:
+                                    ean = match.group(1)
+            
             # Extract image
             product_image = self._extract_image(soup, [
                 'img.product-detail-image',

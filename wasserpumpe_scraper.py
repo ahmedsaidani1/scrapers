@@ -494,7 +494,13 @@ class WasserpumpeScraper(BaseScraper):
                 if isinstance(offers, dict):
                     price = offers.get("price")
                     if price is not None:
-                        result["price_gross"] = self._clean_price(str(price))
+                        # Price from JSON-LD is already in correct format (e.g., "369.00")
+                        # Just convert to German format
+                        try:
+                            price_float = float(str(price))
+                            result["price_gross"] = f"{price_float:.2f}".replace(".", ",")
+                        except (ValueError, TypeError):
+                            result["price_gross"] = self._clean_price(str(price))
 
                 return result
 
@@ -521,16 +527,26 @@ class WasserpumpeScraper(BaseScraper):
             if not product_name:
                 return None
 
-            manufacturer = json_ld["manufacturer"] or self._extract_text(
-                soup,
-                [
-                    "a.product-manufacturer",
-                    "span[itemprop='brand']",
-                    "div.product-brand",
-                    "meta[itemprop='brand']",
-                    "[itemprop='brand'] [itemprop='name']",
-                ],
-            )
+            # Extract manufacturer from product name first (it's usually the first word/brand)
+            manufacturer = ""
+            if product_name:
+                first_word = product_name.split()[0] if product_name.split() else ""
+                # Check if first word looks like a manufacturer (capitalized, not a common word)
+                if first_word and (first_word[0].isupper() or first_word.isupper()):
+                    manufacturer = first_word
+            
+            # Fallback: Try JSON-LD or HTML elements if not found in name
+            if not manufacturer:
+                manufacturer = json_ld["manufacturer"] or self._extract_text(
+                    soup,
+                    [
+                        "a.product-manufacturer",
+                        "span[itemprop='brand']",
+                        "div.product-brand",
+                        "meta[itemprop='brand']",
+                        "[itemprop='brand'] [itemprop='name']",
+                    ],
+                )
 
             category = json_ld["category"] or self._extract_text(
                 soup,

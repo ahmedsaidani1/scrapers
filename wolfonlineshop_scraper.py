@@ -246,13 +246,22 @@ class WolfonlineshopScraper(BaseScraper):
             title = product_name
             name = product_name
             
-            # Extract manufacturer/brand
-            manufacturer = self._extract_text(soup, [
-                'span[itemprop="brand"]',
-                'a.product-detail-manufacturer-link',
-                'div.product-detail-manufacturer',
-                'meta[itemprop="brand"]'
-            ])
+            # Extract manufacturer from product name first (it's usually the first word/brand)
+            manufacturer = ""
+            if product_name:
+                first_word = product_name.split()[0] if product_name.split() else ""
+                # Check if first word looks like a manufacturer (capitalized, not a common word)
+                if first_word and (first_word[0].isupper() or first_word.isupper()):
+                    manufacturer = first_word
+            
+            # Fallback: Try HTML elements if not found in name
+            if not manufacturer:
+                manufacturer = self._extract_text(soup, [
+                    'span[itemprop="brand"]',
+                    'a.product-detail-manufacturer-link',
+                    'div.product-detail-manufacturer',
+                    'meta[itemprop="brand"]'
+                ])
             
             # Try meta tag for brand
             if not manufacturer:

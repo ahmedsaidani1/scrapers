@@ -104,12 +104,21 @@ class Heizungsdiscount24Scraper(BaseScraper):
             title = product_name
             name = product_name
             
-            # Extract manufacturer/brand - try from breadcrumbs or meta
-            manufacturer = self._extract_text(soup, [
-                'span[itemprop="brand"]',
-                'div.manufacturer',
-                'a.brand-link'
-            ])
+            # Extract manufacturer from product name first (it's usually the first word/brand)
+            manufacturer = ""
+            if product_name:
+                first_word = product_name.split()[0] if product_name.split() else ""
+                # Check if first word looks like a manufacturer (capitalized, not a common word)
+                if first_word and (first_word[0].isupper() or first_word.isupper()):
+                    manufacturer = first_word
+            
+            # Fallback: try from breadcrumbs or meta
+            if not manufacturer:
+                manufacturer = self._extract_text(soup, [
+                    'span[itemprop="brand"]',
+                    'div.manufacturer',
+                    'a.brand-link'
+                ])
             
             # Extract category from breadcrumbs or URL
             category = self._extract_text(soup, [
