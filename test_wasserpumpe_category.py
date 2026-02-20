@@ -1,16 +1,16 @@
 """
-Test category extraction from URL for pumpe24 scraper
+Test category extraction from URL for wasserpumpe scraper
 Only scrapes first 2 categories to verify the approach works
 """
 import sys
 sys.path.insert(0, '.')
 
-from pumpe24_scraper import Pumpe24Scraper
+from wasserpumpe_scraper import WasserpumpeScraper
 
 def test_category_extraction():
     """Test category extraction from URLs with limited categories"""
     
-    scraper = Pumpe24Scraper()
+    scraper = WasserpumpeScraper()
     
     # Override to use only first 2 categories for quick testing
     scraper.category_urls = scraper.category_urls[:2]
@@ -24,9 +24,9 @@ def test_category_extraction():
         category_name = scraper._parse_category_from_url(cat_url)
         print(f"Extracted Category: {category_name}\n")
     
-    # Get product URLs (limited to 10 products)
-    print("\nFetching product URLs (max 10)...")
-    product_urls = scraper.get_product_urls(max_urls=10)
+    # Get product URLs directly from categories (skip sitemap)
+    print("\nFetching product URLs from categories (max 10)...")
+    product_urls = scraper._extract_urls_from_categories(max_urls=10)
     
     print(f"\nFound {len(product_urls)} product URLs")
     

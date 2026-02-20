@@ -1,25 +1,25 @@
 """
-Test category extraction from URL for pumpe24 scraper
+Test category extraction from URL for wolfonlineshop scraper
 Only scrapes first 2 categories to verify the approach works
 """
 import sys
 sys.path.insert(0, '.')
 
-from pumpe24_scraper import Pumpe24Scraper
+from wolfonlineshop_scraper import WolfonlineshopScraper
 
 def test_category_extraction():
     """Test category extraction from URLs with limited categories"""
     
-    scraper = Pumpe24Scraper()
+    scraper = WolfonlineshopScraper()
     
     # Override to use only first 2 categories for quick testing
-    scraper.category_urls = scraper.category_urls[:2]
+    scraper.all_categories = scraper.all_categories[:2]
     
     print(f"\n{'='*60}")
-    print(f"Testing category extraction with {len(scraper.category_urls)} categories")
+    print(f"Testing category extraction with {len(scraper.all_categories)} categories")
     print(f"{'='*60}\n")
     
-    for cat_url in scraper.category_urls:
+    for cat_url in scraper.all_categories:
         print(f"Category URL: {cat_url}")
         category_name = scraper._parse_category_from_url(cat_url)
         print(f"Extracted Category: {category_name}\n")

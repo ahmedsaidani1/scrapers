@@ -60,6 +60,22 @@ class Pumpe24Scraper(BaseScraper):
         
         self.logger.info(f"Initialized cloudscraper for {self.base_url}")
         self._warm_up_session()
+    
+    def _parse_category_from_url(self, category_url: str) -> str:
+        """
+        Parse category name from category URL.
+        Example: https://www.pumpe24.de/pumpen/gartenpumpen.html -> Gartenpumpen
+        """
+        # Remove base URL and .html extension
+        path = category_url.replace(self.base_url, '').replace('.html', '').strip('/')
+        
+        # Split by / and get the last meaningful part
+        parts = [p for p in path.split('/') if p]
+        if parts:
+            # Get last part and clean it up
+            category = parts[-1].replace('-', ' ').title()
+            return category
+        return ""
 
     def _create_scraper_session(self):
         """Create a cloudscraper session with optional proxy."""
@@ -252,6 +268,9 @@ class Pumpe24Scraper(BaseScraper):
         product_urls = []
         seen = set()
         
+        # Initialize category mapping
+        self._product_category_map = {}
+        
         try:
             self.logger.info(f"Scraping {len(self.category_urls)} main category pages...")
             
@@ -270,6 +289,9 @@ class Pumpe24Scraper(BaseScraper):
             # Now scrape products from each subcategory with pagination
             for i, subcategory_url in enumerate(all_subcategories, 1):
                 self.logger.info(f"[{i}/{len(all_subcategories)}] Scraping subcategory: {subcategory_url}")
+                
+                # Extract category name for mapping
+                category_name = self._parse_category_from_url(subcategory_url)
                 
                 # Scrape all pages in this subcategory
                 page = 1
@@ -303,6 +325,8 @@ class Pumpe24Scraper(BaseScraper):
                         if self._is_product_url(href) and href not in seen:
                             seen.add(href)
                             product_urls.append(href)
+                            # Store category mapping
+                            self._product_category_map[href] = category_name
                             page_products += 1
                     
                     if page == 1:
@@ -394,12 +418,18 @@ class Pumpe24Scraper(BaseScraper):
                     'meta[itemprop="brand"]'
                 ])
             
-            # Extract category from breadcrumbs
-            category = self._extract_text(soup, [
-                'ul.breadcrumbs li:nth-last-child(2) a',
-                'nav.breadcrumb li:nth-last-child(2) a',
-                'div.breadcrumbs a:last-of-type'
-            ])
+            # Extract category from URL mapping first (most reliable)
+            category = ""
+            if hasattr(self, '_product_category_map') and url in self._product_category_map:
+                category = self._product_category_map[url]
+            
+            # Fallback: Extract from breadcrumbs
+            if not category:
+                category = self._extract_text(soup, [
+                    'ul.breadcrumbs li:nth-last-child(2) a',
+                    'nav.breadcrumb li:nth-last-child(2) a',
+                    'div.breadcrumbs a:last-of-type'
+                ])
             
             # Extract article number/SKU
             # Try standard selectors first

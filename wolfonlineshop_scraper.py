@@ -119,12 +119,31 @@ class WolfonlineshopScraper(BaseScraper):
         
         self.logger.info(f"Initialized scraper for {self.base_url}")
     
+    def _parse_category_from_url(self, category_url: str) -> str:
+        """
+        Parse category name from category URL.
+        Example: https://www.heat-store.de/heizung/gas-heizung/gastherme// -> Gastherme
+        """
+        # Remove base URL and trailing slashes
+        path = category_url.replace(self.base_url, '').strip('/')
+        
+        # Split by / and get the last meaningful part
+        parts = [p for p in path.split('/') if p]
+        if parts:
+            # Get last part and clean it up
+            category = parts[-1].replace('-', ' ').title()
+            return category
+        return ""
+    
     def get_product_urls(self, max_urls: int = None) -> List[str]:
         """
         Get list of product URLs by scraping all known categories with pagination.
         """
         product_urls = []
         seen = set()
+        
+        # Initialize category mapping
+        self._product_category_map = {}
         
         try:
             self.logger.info(f"Scraping {len(self.all_categories)} categories...")
@@ -172,6 +191,9 @@ class WolfonlineshopScraper(BaseScraper):
                     
                     # Extract product URLs
                     page_products = 0
+                    # Extract category name from URL for mapping
+                    category_name = self._parse_category_from_url(category_url)
+                    
                     for link in product_links:
                         href = link.get('href', '')
                         if href:
@@ -184,6 +206,8 @@ class WolfonlineshopScraper(BaseScraper):
                             if href not in seen:
                                 seen.add(href)
                                 product_urls.append(href)
+                                # Store category mapping
+                                self._product_category_map[href] = category_name
                                 page_products += 1
                                 category_has_products = True
                     
@@ -223,6 +247,16 @@ class WolfonlineshopScraper(BaseScraper):
             self.logger.error(f"Error getting product URLs: {e}", exc_info=True)
         
         return product_urls[:max_urls] if max_urls else product_urls
+    
+    def _extract_category_from_url(self, url: str, product_url: str) -> str:
+        """
+        Extract category from the category URL that led to this product.
+        Stores mapping during URL collection and retrieves during scraping.
+        """
+        # Check if we have a stored category for this product
+        if hasattr(self, '_product_category_map') and product_url in self._product_category_map:
+            return self._product_category_map[product_url]
+        return ""
     
     def scrape_product(self, url: str) -> Optional[Dict[str, Any]]:
         """
@@ -283,12 +317,16 @@ class WolfonlineshopScraper(BaseScraper):
                 if sku_meta:
                     article_number = sku_meta.get('content', '')
             
-            # Extract category from breadcrumbs
-            category = self._extract_text(soup, [
-                'nav.breadcrumb li:nth-last-child(2) a',
-                'span[itemprop="category"]',
-                'div.product-detail-category'
-            ])
+            # Extract category from URL mapping first (most reliable)
+            category = self._extract_category_from_url(url, url)
+            
+            # Fallback: Extract from breadcrumbs if not in mapping
+            if not category:
+                category = self._extract_text(soup, [
+                    'nav.breadcrumb li:nth-last-child(2) a',
+                    'span[itemprop="category"]',
+                    'div.product-detail-category'
+                ])
             
             # Extract price (gross - with VAT)
             price_gross_raw = self._extract_text(soup, [
