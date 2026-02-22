@@ -189,46 +189,30 @@ class StShop24Scraper(BaseScraper):
                 if brand_meta:
                     manufacturer = brand_meta.get('content', '')
             
-            # Extract article number/SKU
-            # For st-shop24, the article number is typically at the end of the product title
-            # Example: "Grundfos Kit Gleitringdichtung für CRT2/4 - AUUV - 96513599"
+            # Extract article number/SKU from details table
             article_number = ""
             
-            if product_name:
-                # Try to extract article number from product name (usually at the end)
-                # Look for patterns like: 8-digit numbers, alphanumeric codes
-                import re
-                
-                # Try 8-digit number (most common)
-                match = re.search(r'\b(\d{8})\b', product_name)
-                if match:
-                    article_number = match.group(1)
-                else:
-                    # Try alphanumeric code at the end (e.g., "ABC-123", "XYZ123")
-                    match = re.search(r'[-\s]([A-Z0-9]{3,}[-]?[A-Z0-9]+)$', product_name)
-                    if match:
-                        article_number = match.group(1)
+            # Look for "Artikelnummer" or "Article number" in details table
+            article_th = soup.find('th', string=lambda t: t and ('Artikelnummer' in t or 'Article number' in t))
+            if article_th:
+                article_td = article_th.find_next_sibling('td')
+                if article_td:
+                    article_number = article_td.text.strip()
+                    
+                    # Clean up article number: remove manufacturer suffix if present
+                    # Format is often like "985848_Grundfos" or "98434906-Großpack_Grundfos"
+                    # We want just the first part before underscore
+                    if '_' in article_number:
+                        article_number = article_number.split('_')[0]
             
-            # If not found in title, try standard SKU selectors
+            # Fallback: Try standard SKU selectors
             if not article_number:
-                sku_selectors = [
+                article_number = self._extract_text(soup, [
                     'span[itemprop="sku"]',
                     'div.sku span',
                     'span.sku',
                     'meta[itemprop="sku"]'
-                ]
-                
-                for selector in sku_selectors:
-                    if selector.startswith('meta'):
-                        sku_meta = soup.select_one(selector)
-                        if sku_meta and sku_meta.get('content'):
-                            article_number = sku_meta.get('content', '').strip()
-                            break
-                    else:
-                        sku_elem = soup.select_one(selector)
-                        if sku_elem:
-                            article_number = sku_elem.text.strip()
-                            break
+                ])
             
             # Extract category from breadcrumbs
             category = self._extract_text(soup, [
@@ -263,19 +247,24 @@ class StShop24Scraper(BaseScraper):
                 except:
                     price_net = ""
             
-            # Extract EAN
-            ean = self._extract_text(soup, [
-                'span[itemprop="gtin13"]',
-                'div.ean span',
-                'span.ean',
-                'meta[itemprop="gtin13"]'
-            ])
+            # Extract EAN from details table
+            ean = ""
             
-            # Try meta tag
+            # Look for "EAN" in details table
+            ean_th = soup.find('th', string=lambda t: t and 'EAN' in t)
+            if ean_th:
+                ean_td = ean_th.find_next_sibling('td')
+                if ean_td:
+                    ean = ean_td.text.strip()
+            
+            # Fallback: Try standard EAN selectors
             if not ean:
-                ean_meta = soup.select_one('meta[itemprop="gtin13"]')
-                if ean_meta:
-                    ean = ean_meta.get('content', '')
+                ean = self._extract_text(soup, [
+                    'span[itemprop="gtin13"]',
+                    'div.ean span',
+                    'span.ean',
+                    'meta[itemprop="gtin13"]'
+                ])
             
             # Extract image (Magento structure)
             product_image = self._extract_image(soup, [
