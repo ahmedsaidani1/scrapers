@@ -163,10 +163,6 @@ class Heima24Scraper(BaseScraper):
             
             # Extract category from breadcrumbs or URL
             category = self._extract_text(soup, [
-
-            # Fallback: extract category from URL if not found
-            if not category:
-                category = self._extract_category_from_url(url, self.base_url)
                 'div.breadcrumb a:nth-last-child(2)',
                 'span[itemprop="category"]'
             ])
@@ -176,10 +172,6 @@ class Heima24Scraper(BaseScraper):
                 parts = url.split('/')
                 if len(parts) > 3:
                     category = parts[3].replace('-', ' ').title()
-
-                    # Fallback: extract category from URL if not found
-                    if not category:
-                        category = self._extract_category_from_url(url, self.base_url)
             
             # Extract article number from HTML if not in JSON-LD
             if not article_number:
