@@ -105,44 +105,55 @@ class SelfioScraper(BaseScraper):
         try:
             soup = self.parse_html(response.text)
             
-            # Extract product name/title (Shopware structure)
-            product_name = self._extract_text(soup, [
-                'h1.product-detail-name',
-                'h1[itemprop="name"]',
-                'h1.product-title',
-                'h1'
-            ])
+            # Try JSON-LD extraction first (most reliable for Selfio)
+            json_ld_data = self._extract_from_json_ld(soup)
+            
+            # Extract product name/title
+            product_name = json_ld_data.get('name', '')
+            if not product_name:
+                product_name = self._extract_text(soup, [
+                    'h1.product-detail-name',
+                    'h1[itemprop="name"]',
+                    'h1.product-title',
+                    'h1'
+                ])
             
             title = product_name
             name = product_name
             
-            # Extract manufacturer/brand
-            manufacturer = self._extract_text(soup, [
-                'a.product-detail-manufacturer-link',
-                'span[itemprop="brand"]',
-                'div.product-detail-manufacturer',
-                'meta[itemprop="brand"]'
-            ])
+            # Extract manufacturer from product name (first word)
+            manufacturer = ""
+            if product_name:
+                first_word = product_name.split()[0] if product_name.split() else ""
+                # Check if first word looks like a manufacturer (capitalized)
+                if first_word and (first_word[0].isupper() or first_word.isupper()):
+                    manufacturer = first_word
             
-            # Try meta tag for brand
+            # Fallback: try from HTML elements
             if not manufacturer:
-                brand_meta = soup.select_one('meta[itemprop="brand"]')
-                if brand_meta:
-                    manufacturer = brand_meta.get('content', '')
+                manufacturer = self._extract_text(soup, [
+                    'a.product-detail-manufacturer-link',
+                    'span[itemprop="brand"]',
+                    'div.product-detail-manufacturer',
+                    'meta[itemprop="brand"]'
+                ])
             
-            # Extract article number/SKU (Shopware specific)
-            article_number = self._extract_text(soup, [
-                'span.product-detail-ordernumber',
-                'span[itemprop="sku"]',
-                'div.product-number',
-                'meta[itemprop="sku"]'
-            ])
+            # Extract article number from product name (look for number pattern)
+            article_number = json_ld_data.get('article_number', '')
+            if not article_number and product_name:
+                # Look for article number pattern in name (e.g., "33521705")
+                article_match = re.search(r'\b(\d{5,})\b', product_name)
+                if article_match:
+                    article_number = article_match.group(1)
             
-            # Try meta tag for SKU
+            # Fallback: try from HTML elements
             if not article_number:
-                sku_meta = soup.select_one('meta[itemprop="sku"]')
-                if sku_meta:
-                    article_number = sku_meta.get('content', '')
+                article_number = self._extract_text(soup, [
+                    'span.product-detail-ordernumber',
+                    'span[itemprop="sku"]',
+                    'div.product-number',
+                    'meta[itemprop="sku"]'
+                ])
             
             # Extract category from breadcrumbs
             category = self._extract_text(soup, [
@@ -151,21 +162,18 @@ class SelfioScraper(BaseScraper):
                 'div.product-detail-category'
             ])
             
-            # Extract price (gross - with VAT) - Shopware structure
-            price_gross_raw = self._extract_text(soup, [
-                'meta[itemprop="price"]',
-                'span.product-detail-price',
-                'div.product-price .price',
-                'span[itemprop="price"]'
-            ])
+            # Extract price from JSON-LD
+            price_gross = json_ld_data.get('price_gross', '')
             
-            # Try meta tag
-            if not price_gross_raw:
-                price_meta = soup.select_one('meta[itemprop="price"]')
-                if price_meta:
-                    price_gross_raw = price_meta.get('content', '')
-            
-            price_gross = self._clean_price(price_gross_raw)
+            # Fallback: try from HTML elements
+            if not price_gross:
+                price_gross_raw = self._extract_text(soup, [
+                    'meta[itemprop="price"]',
+                    'span.product-detail-price',
+                    'div.product-price .price',
+                    'span[itemprop="price"]'
+                ])
+                price_gross = self._clean_price(price_gross_raw)
             
             # Calculate net price (German VAT is 19%)
             price_net = ""
@@ -177,27 +185,29 @@ class SelfioScraper(BaseScraper):
                 except:
                     price_net = ""
             
-            # Extract EAN
-            ean = self._extract_text(soup, [
-                'span[itemprop="gtin13"]',
-                'div.product-detail-ean',
-                'span.ean',
-                'meta[itemprop="gtin13"]'
-            ])
+            # Extract EAN from JSON-LD
+            ean = json_ld_data.get('ean', '')
             
-            # Try meta tag
+            # Fallback: try from HTML elements
             if not ean:
-                ean_meta = soup.select_one('meta[itemprop="gtin13"]')
-                if ean_meta:
-                    ean = ean_meta.get('content', '')
+                ean = self._extract_text(soup, [
+                    'span[itemprop="gtin13"]',
+                    'div.product-detail-ean',
+                    'span.ean',
+                    'meta[itemprop="gtin13"]'
+                ])
             
-            # Extract image (Shopware structure)
-            product_image = self._extract_image(soup, [
-                'div.gallery-slider-item img',
-                'img.product-detail-image',
-                'img[itemprop="image"]',
-                'meta[property="og:image"]'
-            ])
+            # Extract image from JSON-LD
+            product_image = json_ld_data.get('image', '')
+            
+            # Fallback: try from HTML elements
+            if not product_image:
+                product_image = self._extract_image(soup, [
+                    'div.gallery-slider-item img',
+                    'img.product-detail-image',
+                    'img[itemprop="image"]',
+                    'meta[property="og:image"]'
+                ])
             
             # Validate minimum required data
             if not product_name:
@@ -272,6 +282,109 @@ class SelfioScraper(BaseScraper):
         # Remove currency symbols and extra text, keep numbers, dots, commas
         price = re.sub(r'[^\d,.]', '', price_str)
         return price.strip()
+    
+    def _extract_from_json_ld(self, soup) -> Dict[str, str]:
+        """
+        Extract product data from JSON-LD structured data.
+        Returns dict with: name, ean, price_gross, image, article_number
+        """
+        result = {
+            'name': '',
+            'ean': '',
+            'price_gross': '',
+            'image': '',
+            'article_number': ''
+        }
+        
+        try:
+            # Find JSON-LD script tag
+            scripts = soup.find_all('script', type='application/ld+json')
+            
+            for script in scripts:
+                if not script.string:
+                    continue
+                
+                try:
+                    import json
+                    json_text = script.string.strip()
+                    
+                    # Remove CDATA if present
+                    if json_text.startswith('<![CDATA['):
+                        json_text = json_text.replace('<![CDATA[', '').replace(']]>', '')
+                    
+                    data = json.loads(json_text)
+                    
+                    # Check if it's a Product schema
+                    if data.get('@type') == 'Product':
+                        # Extract name
+                        if 'name' in data:
+                            result['name'] = data['name']
+                        
+                        # Extract EAN
+                        if 'ean' in data:
+                            result['ean'] = data['ean']
+                        elif 'gtin13' in data:
+                            result['ean'] = data['gtin13']
+                        
+                        # Extract SKU/article number
+                        if 'sku' in data:
+                            result['article_number'] = data['sku']
+                        elif 'mpn' in data:  # Manufacturer Part Number
+                            result['article_number'] = data['mpn']
+                        
+                        # Extract image
+                        if 'image' in data:
+                            image_data = data['image']
+                            if isinstance(image_data, list) and len(image_data) > 0:
+                                result['image'] = image_data[0]
+                            elif isinstance(image_data, str):
+                                result['image'] = image_data
+                        
+                        # Extract price from offers
+                        if 'offers' in data:
+                            offers = data['offers']
+                            
+                            # Handle AggregateOffer
+                            if offers.get('@type') == 'AggregateOffer':
+                                if 'lowPrice' in offers:
+                                    price = str(offers['lowPrice'])
+                                    # Convert to German format
+                                    result['price_gross'] = price.replace('.', ',')
+                            
+                            # Handle single Offer
+                            elif offers.get('@type') == 'Offer':
+                                if 'price' in offers:
+                                    price = str(offers['price'])
+                                    # Convert to German format
+                                    result['price_gross'] = price.replace('.', ',')
+                        
+                        # Extract article number from name if not found yet
+                        if not result['article_number'] and result['name']:
+                            # Look for article number pattern (5+ digits)
+                            article_match = re.search(r'\b(\d{5,})\b', result['name'])
+                            if article_match:
+                                result['article_number'] = article_match.group(1)
+                        
+                        # Also try from description
+                        if not result['article_number'] and 'description' in data:
+                            desc = data['description']
+                            # Look for article number pattern
+                            article_match = re.search(r'\b(\d{5,})\b', desc)
+                            if article_match:
+                                result['article_number'] = article_match.group(1)
+                        
+                        break
+                
+                except json.JSONDecodeError:
+                    continue
+                except Exception as e:
+                    self.logger.debug(f"Error parsing JSON-LD: {e}")
+                    continue
+        
+        except Exception as e:
+            self.logger.debug(f"Error extracting JSON-LD: {e}")
+        
+        return result
 
 
 def main():

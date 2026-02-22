@@ -52,6 +52,16 @@ class WasserpumpeScraper(BaseScraper):
         "/wishlist",
         "/account",
         "/cart",
+        "/media/",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".pdf",
+        # Category pages that look like products
+        "dab-evosta-2-umwaelzpumpe",
+        "grundfos-alpha-2",
+        "wilo-yonos-pico",
     ]
 
     def __init__(self):
@@ -195,9 +205,29 @@ class WasserpumpeScraper(BaseScraper):
                 return False
 
         slug = path.strip("/").split("/")[-1]
-        if len(slug) < 12:
+        
+        # Product URLs must be long and specific
+        if len(slug) < 20:
             return False
-        if slug.count("-") < 2 and not any(ch.isdigit() for ch in slug):
+            
+        # Must have at least 3 hyphens (brand-model-details)
+        if slug.count("-") < 3:
+            return False
+            
+        # Must contain digits (model numbers)
+        if not any(ch.isdigit() for ch in slug):
+            return False
+        
+        # Must contain a known brand name (case insensitive)
+        known_brands = [
+            'dab', 'grundfos', 'wilo', 'espa', 'ebara', 'pedrollo', 
+            'lowara', 'calpeda', 'leo', 'metabo', 'gardena', 'einhell',
+            'kärcher', 'karcher', 'trotec', 'güde', 'gude', 'al-ko', 'alko'
+        ]
+        slug_lower = slug.lower()
+        has_brand = any(brand in slug_lower for brand in known_brands)
+        
+        if not has_brand:
             return False
 
         return True
