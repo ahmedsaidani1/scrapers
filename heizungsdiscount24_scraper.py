@@ -144,6 +144,43 @@ class Heizungsdiscount24Scraper(BaseScraper):
                         article_number = id_match.group(1)
                         break
             
+            # Extract EAN from JSON-LD structured data
+            ean = ""
+            product_image = ""
+            for script in scripts:
+                if script.string and '"@type"' in script.string and '"Product"' in script.string:
+                    try:
+                        # Try to parse JSON-LD
+                        import json
+                        json_text = script.string.strip()
+                        if json_text.startswith('<![CDATA['):
+                            json_text = json_text.replace('<![CDATA[', '').replace(']]>', '')
+                        product_data = json.loads(json_text)
+                        
+                        # Extract EAN (gtin13)
+                        if 'gtin13' in product_data:
+                            ean = product_data['gtin13']
+                        
+                        # Extract image
+                        if 'image' in product_data:
+                            image_data = product_data['image']
+                            if isinstance(image_data, list) and len(image_data) > 0:
+                                product_image = image_data[0]
+                            elif isinstance(image_data, str):
+                                product_image = image_data
+                        
+                        break
+                    except:
+                        pass
+            
+            # Fallback: Try HTML elements for EAN if not found in JSON-LD
+            if not ean:
+                ean = self._extract_text(soup, [
+                    'span[itemprop="gtin13"]',
+                    'span.ean',
+                    'meta[itemprop="gtin13"]'
+                ])
+            
             # Extract price (gross - with VAT)
             price_gross_raw = ""
             
@@ -178,20 +215,14 @@ class Heizungsdiscount24Scraper(BaseScraper):
                 except:
                     price_net = ""
             
-            # Extract EAN - not commonly available on this site
-            ean = self._extract_text(soup, [
-                'span[itemprop="gtin13"]',
-                'span.ean',
-                'meta[itemprop="gtin13"]'
-            ])
-            
-            # Extract image
-            product_image = self._extract_image(soup, [
-                'img[itemprop="image"]',
-                'div.product-image img',
-                'img.main-image',
-                'meta[property="og:image"]'
-            ])
+            # Fallback: Extract image from HTML if not found in JSON-LD
+            if not product_image:
+                product_image = self._extract_image(soup, [
+                    'img[itemprop="image"]',
+                    'div.product-image img',
+                    'img.main-image',
+                    'meta[property="og:image"]'
+                ])
             
             # Validate minimum required data
             if not product_name:
